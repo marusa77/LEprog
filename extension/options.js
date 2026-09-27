@@ -1,6 +1,8 @@
 const urlInput = document.querySelector("#url");
 const keyInput = document.querySelector("#key");
 const message = document.querySelector("#message");
+const configMessage = document.querySelector("#config-message");
+const saveConfigButton = document.querySelector("#save-config");
 const signedOut = document.querySelector("#signed-out");
 const signedIn = document.querySelector("#signed-in");
 
@@ -10,16 +12,30 @@ async function initialize() {
   const values = await chrome.storage.local.get(["supabaseUrl", "supabaseKey", "phraseNestSession"]);
   urlInput.value = values.supabaseUrl || "";
   keyInput.value = values.supabaseKey || "";
+  if (values.supabaseUrl && values.supabaseKey) setConfigMessage("✓ 接続情報は保存済みです");
   showSession(Boolean(values.phraseNestSession?.access_token));
   document.querySelector("#redirect-url").textContent = chrome.identity.getRedirectURL("supabase");
 }
 
-document.querySelector("#save-config").addEventListener("click", async () => {
-  const url = urlInput.value.trim().replace(/\/$/, "");
-  const key = keyInput.value.trim();
-  if (!url || !key) return setMessage("Project URLとPublishable keyを入力してください", true);
-  await chrome.storage.local.set({ supabaseUrl: url, supabaseKey: key });
-  setMessage("接続情報を保存しました");
+saveConfigButton.addEventListener("click", async () => {
+  try {
+    const url = urlInput.value.trim().replace(/\/$/, "");
+    const key = keyInput.value.trim();
+    if (!url || !key) return setConfigMessage("Project URLとPublishable keyを入力してください", true);
+    if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(url)) return setConfigMessage("Project URLの形式を確認してください", true);
+    if (!key.startsWith("sb_publishable_") && !key.startsWith("eyJ")) return setConfigMessage("Publishable keyを確認してください", true);
+    saveConfigButton.disabled = true;
+    saveConfigButton.textContent = "保存中…";
+    await chrome.storage.local.set({ supabaseUrl: url, supabaseKey: key });
+    const saved = await chrome.storage.local.get(["supabaseUrl", "supabaseKey"]);
+    if (saved.supabaseUrl !== url || saved.supabaseKey !== key) throw new Error("保存内容を確認できませんでした");
+    setConfigMessage("✓ 接続情報を保存しました");
+  } catch (error) {
+    setConfigMessage(error.message || "保存できませんでした", true);
+  } finally {
+    saveConfigButton.disabled = false;
+    saveConfigButton.textContent = "接続情報を保存";
+  }
 });
 
 document.querySelector("#google-login").addEventListener("click", async () => {
@@ -44,3 +60,4 @@ document.querySelector("#google-login").addEventListener("click", async () => {
 document.querySelector("#logout").addEventListener("click", async () => { await chrome.storage.local.remove("phraseNestSession"); showSession(false); setMessage("ログアウトしました"); });
 function showSession(active) { signedOut.hidden = active; signedIn.hidden = !active; }
 function setMessage(text, error = false) { message.textContent = text; message.style.color = error ? "#a4473e" : "#1f654f"; }
+function setConfigMessage(text, error = false) { configMessage.textContent = text; configMessage.style.color = error ? "#a4473e" : "#1f654f"; }
