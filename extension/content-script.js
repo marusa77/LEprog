@@ -1,5 +1,17 @@
 let phraseNestHost;
 let selectedPageText = "";
+let localTranslator;
+
+const commonPhrases = [
+  "on the fence", "at the end of the day", "as far as i know", "for the most part",
+  "in the long run", "out of nowhere", "a lot of", "kind of", "sort of",
+  "turn out", "figure out", "find out", "come up with", "get rid of", "end up",
+  "make sure", "deal with", "look forward to", "be supposed to", "used to",
+];
+
+const stopWords = new Set(
+  "this that these those there here have has had been being were was will would could should about after before because while where which what when who whom whose then than just also very really much many some any each every other another into from with without your yours their theirs they them our ours you are and but not for the its it's can may might must does did doing done said says like even only more most such still already ever never reddit post comment people thing things something anything everything someone anyone everyone".split(" "),
+);
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "OPEN_TRANSLATOR") openTranslator();
@@ -23,7 +35,7 @@ async function openTranslator() {
     root.querySelector("#pn-provider").textContent = "端末内翻訳 · ¥0";
     root.querySelector("#pn-local").hidden = true;
     root.querySelector("#pn-cloud").hidden = true;
-    setPanelMessage("");
+    await populateCandidateTerms(selectedPageText);
   } else if (localResult.needsActivation) {
     root.querySelector("#pn-provider").textContent = "英日翻訳データの準備が必要です";
     root.querySelector("#pn-local").hidden = false;
@@ -60,7 +72,7 @@ function createPanel() {
       <button id="pn-cloud" class="pn-secondary pn-full" type="button" hidden>クラウド翻訳を使う</button>
       <label class="pn-label" for="pn-note">自分用の説明・メモ</label>
       <textarea id="pn-note" rows="2" placeholder="直訳では分かりにくい点など"></textarea>
-      <div class="pn-section-title"><strong>保存する単語・熟語</strong><span>必要なものだけ</span></div>
+      <div class="pn-section-title"><strong>単語・熟語の候補</strong><span>保存するものにチェック</span></div>
       <div class="pn-add-row"><input id="pn-term-input" type="text" placeholder="例：on the fence"><button id="pn-add-term" class="pn-secondary" type="button">追加</button></div>
       <div id="pn-terms" class="pn-terms"></div>
       <p id="pn-message" class="pn-message" role="status"></p>
@@ -89,7 +101,7 @@ function bindPanelEvents(root) {
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && phraseNestHost && !phraseNestHost.hidden) phraseNestHost.hidden = true; });
 }
 
-async function addTerm(rawTerm) {
+async function addTerm(rawTerm, automatic = false) {
   const root = phraseNestHost.shadowRoot;
   const term = rawTerm.trim().replace(/\s+/g, " ");
   if (!term) return;
@@ -99,14 +111,25 @@ async function addTerm(rawTerm) {
   const row = document.createElement("div");
   row.className = "pn-term";
   row.dataset.normalized = normalized;
+  const check = document.createElement("input");
+  check.type = "checkbox";
+  check.className = "pn-term-check";
+  check.checked = !automatic;
+  check.setAttribute("aria-label", `${term}を保存する`);
   const text = document.createElement("div"); text.className = "pn-term-text";
+  const titleLine = document.createElement("div"); titleLine.className = "pn-term-title";
   const title = document.createElement("strong"); title.textContent = term;
+  titleLine.append(title);
+  if (automatic) {
+    const badge = document.createElement("span"); badge.textContent = "候補";
+    titleLine.append(badge);
+  }
   const meaning = document.createElement("input"); meaning.placeholder = "意味を入力"; meaning.setAttribute("aria-label", `${term}の意味`);
-  text.append(title, meaning);
+  text.append(titleLine, meaning);
   const actions = document.createElement("div"); actions.className = "pn-term-actions";
   const ai = document.createElement("button"); ai.type = "button"; ai.className = "pn-ai"; ai.textContent = "AI解説"; ai.addEventListener("click", () => explainTerm(term, meaning));
   const remove = document.createElement("button"); remove.type = "button"; remove.className = "pn-remove"; remove.textContent = "×"; remove.setAttribute("aria-label", `${term}を削除`); remove.addEventListener("click", () => row.remove());
-  actions.append(ai, remove); row.append(text, actions); root.querySelector("#pn-terms").append(row);
+  actions.append(ai, remove); row.append(check, text, actions); root.querySelector("#pn-terms").append(row);
   const localResult = await translateLocally(term);
   if (localResult.translation) meaning.value = localResult.translation;
 }
@@ -114,17 +137,18 @@ async function addTerm(rawTerm) {
 async function translateLocally(text, allowDownload = false, onProgress = () => {}) {
   try {
     if (!("Translator" in globalThis)) return { translation: null, needsActivation: false };
+    if (localTranslator) return { translation: await localTranslator.translate(text), needsActivation: false };
     if (!allowDownload) {
       const availability = await globalThis.Translator.availability({ sourceLanguage: "en", targetLanguage: "ja" });
       if (availability === "unavailable") return { translation: null, needsActivation: false };
       if (availability !== "available") return { translation: null, needsActivation: true };
     }
-    const translator = await globalThis.Translator.create({
+    localTranslator = await globalThis.Translator.create({
       sourceLanguage: "en",
       targetLanguage: "ja",
       monitor(monitor) { monitor.addEventListener("downloadprogress", (event) => onProgress(Math.round(event.loaded * 100))); },
     });
-    return { translation: await translator.translate(text), needsActivation: false };
+    return { translation: await localTranslator.translate(text), needsActivation: false };
   } catch { return { translation: null, needsActivation: false }; }
 }
 
@@ -146,7 +170,7 @@ async function useLocalTranslation() {
   root.querySelector("#pn-provider").textContent = "端末内翻訳 · ¥0";
   button.hidden = true;
   root.querySelector("#pn-cloud").hidden = true;
-  setPanelMessage("無料の端末内翻訳が利用できるようになりました。");
+  await populateCandidateTerms(selectedPageText);
 }
 
 async function useCloudTranslation() {
@@ -156,7 +180,35 @@ async function useCloudTranslation() {
   if (!response?.ok) return setPanelMessage(response?.error || "クラウド翻訳に失敗しました。", true);
   root.querySelector("#pn-translation").value = response.result.translation;
   root.querySelector("#pn-provider").textContent = `クラウド翻訳 · ${response.result.characters}文字`;
-  root.querySelector("#pn-cloud").hidden = true; setPanelMessage("");
+  root.querySelector("#pn-cloud").hidden = true;
+  await populateCandidateTerms(selectedPageText);
+}
+
+function extractCandidates(sentence) {
+  const lower = sentence.toLowerCase().replace(/[’]/g, "'");
+  const phrases = commonPhrases.filter((phrase) => {
+    const pattern = phrase.replace(/\s+/g, "\\s+");
+    return new RegExp(`\\b${pattern}\\b`, "i").test(lower);
+  });
+  const words = (lower.match(/[a-z]+(?:'[a-z]+)?/g) || [])
+    .filter((word) => word.length >= 4 && !word.includes("'") && !stopWords.has(word));
+  const uniqueWords = [...new Set(words)].filter(
+    (word) => !phrases.some((phrase) => phrase.split(" ").includes(word)),
+  );
+  return [...phrases, ...uniqueWords].slice(0, 8);
+}
+
+async function populateCandidateTerms(sentence) {
+  const candidates = extractCandidates(sentence);
+  if (!candidates.length) return setPanelMessage("単語・熟語の候補は見つかりませんでした。");
+  setPanelMessage(`単語・熟語の候補を準備中… 0/${candidates.length}`);
+  let completed = 0;
+  await Promise.all(candidates.map(async (candidate) => {
+    await addTerm(candidate, true);
+    completed += 1;
+    setPanelMessage(`単語・熟語の候補を準備中… ${completed}/${candidates.length}`);
+  }));
+  setPanelMessage("保存したい単語・熟語にチェックを入れてください。");
 }
 
 async function explainTerm(expression, meaningInput) {
@@ -173,7 +225,13 @@ async function saveCapture() {
   const root = phraseNestHost.shadowRoot;
   const saveButton = root.querySelector("#pn-save");
   saveButton.disabled = true; saveButton.textContent = "保存中…";
-  const terms = [...root.querySelectorAll(".pn-term")].map((row) => ({ term: row.querySelector("strong").textContent, meaning: row.querySelector("input").value, note: "" }));
+  const terms = [...root.querySelectorAll(".pn-term")]
+    .filter((row) => row.querySelector(".pn-term-check").checked)
+    .map((row) => ({
+      term: row.querySelector("strong").textContent,
+      meaning: row.querySelector(".pn-term-text input").value,
+      note: "",
+    }));
   const pathMatch = location.pathname.match(/\/r\/([^/]+)/i);
   const payload = { p_original_text: selectedPageText, p_machine_translation: root.querySelector("#pn-translation").value, p_translation: root.querySelector("#pn-translation").value, p_note: root.querySelector("#pn-note").value, p_source_url: location.href, p_source_title: document.title, p_subreddit: pathMatch ? `r/${pathMatch[1]}` : null, p_terms: terms };
   const response = await chrome.runtime.sendMessage({ type: "SAVE_CAPTURE", payload });
