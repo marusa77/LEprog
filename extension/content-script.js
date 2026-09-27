@@ -2,12 +2,51 @@ let phraseNestHost;
 let selectedPageText = "";
 let localTranslator;
 
-const commonPhrases = [
-  "on the fence", "at the end of the day", "as far as i know", "for the most part",
-  "in the long run", "out of nowhere", "a lot of", "kind of", "sort of",
-  "turn out", "figure out", "find out", "come up with", "get rid of", "end up",
-  "make sure", "deal with", "look forward to", "be supposed to", "used to",
-];
+const commonExpressions = globalThis.PHRASE_NEST_COMMON_EXPRESSIONS || [];
+const irregularVerbForms = {
+  be: ["am", "is", "are", "was", "were", "been", "being"],
+  break: ["breaks", "broke", "broken", "breaking"],
+  bring: ["brings", "brought", "bringing"],
+  catch: ["catches", "caught", "catching"],
+  come: ["comes", "came", "coming"],
+  cut: ["cuts", "cutting"],
+  do: ["does", "did", "done", "doing"],
+  eat: ["eats", "ate", "eaten", "eating"],
+  fall: ["falls", "fell", "fallen", "falling"],
+  feel: ["feels", "felt", "feeling"],
+  find: ["finds", "found", "finding"],
+  get: ["gets", "got", "gotten", "getting"],
+  give: ["gives", "gave", "given", "giving"],
+  go: ["goes", "went", "gone", "going"],
+  grow: ["grows", "grew", "grown", "growing"],
+  have: ["has", "had", "having"],
+  hold: ["holds", "held", "holding"],
+  keep: ["keeps", "kept", "keeping"],
+  leave: ["leaves", "left", "leaving"],
+  let: ["lets", "letting"],
+  make: ["makes", "made", "making"],
+  pay: ["pays", "paid", "paying"],
+  put: ["puts", "putting"],
+  run: ["runs", "ran", "running"],
+  set: ["sets", "setting"],
+  show: ["shows", "showed", "shown", "showing"],
+  shut: ["shuts", "shutting"],
+  speak: ["speaks", "spoke", "spoken", "speaking"],
+  stand: ["stands", "stood", "standing"],
+  take: ["takes", "took", "taken", "taking"],
+  think: ["thinks", "thought", "thinking"],
+  throw: ["throws", "threw", "thrown", "throwing"],
+  wake: ["wakes", "woke", "woken", "waking"],
+  write: ["writes", "wrote", "written", "writing"],
+};
+const expressionVerbs = new Set([
+  "ask", "back", "blow", "break", "bring", "call", "calm", "carry", "catch", "check",
+  "clean", "come", "count", "cut", "deal", "do", "dress", "drop", "eat", "end", "fall",
+  "feel", "figure", "fill", "find", "get", "give", "go", "grow", "hand", "hang", "have",
+  "hold", "keep", "leave", "let", "log", "look", "make", "move", "pass", "pay", "pick",
+  "point", "put", "run", "set", "show", "shut", "slow", "sort", "speak", "stand", "take",
+  "talk", "think", "throw", "try", "turn", "wake", "watch", "work", "write", "be",
+]);
 
 const stopWords = new Set(
   "this that these those there here have has had been being were was will would could should about after before because while where which what when who whom whose then than just also very really much many some any each every other another into from with without your yours their theirs they them our ours you are and but not for the its it's can may might must does did doing done said says like even only more most such still already ever never reddit post comment people thing things something anything everything someone anyone everyone".split(" "),
@@ -214,16 +253,51 @@ async function useCloudTranslation() {
 
 function extractCandidates(sentence) {
   const lower = sentence.toLowerCase().replace(/[’]/g, "'");
-  const phrases = commonPhrases.filter((phrase) => {
-    const pattern = phrase.replace(/\s+/g, "\\s+");
-    return new RegExp(`\\b${pattern}\\b`, "i").test(lower);
-  });
+  const phrases = findCommonExpressions(lower);
   const words = (lower.match(/[a-z]+(?:'[a-z]+)?/g) || [])
     .filter((word) => word.length >= 4 && !word.includes("'") && !stopWords.has(word));
   const uniqueWords = [...new Set(words)].filter(
     (word) => !phrases.some((phrase) => phrase.split(" ").includes(word)),
   );
-  return [...phrases, ...uniqueWords].slice(0, 8);
+  return [...phrases, ...uniqueWords].slice(0, 12);
+}
+
+function findCommonExpressions(sentence) {
+  const found = [];
+  const normalized = sentence.replace(/\s+/g, " ");
+  const longestFirst = [...commonExpressions].sort((left, right) => right.split(" ").length - left.split(" ").length);
+  for (const expression of longestFirst) {
+    const words = expression.split(" ");
+    const first = words[0];
+    const forms = expressionVerbs.has(first) ? verbForms(first) : [first];
+    const firstPattern = forms.sort((left, right) => right.length - left.length).map(escapeRegExp).join("|");
+    const rest = words.slice(1).map(escapeRegExp).join("\\s+");
+    const pattern = new RegExp(`\\b(?:${firstPattern})${rest ? `\\s+${rest}` : ""}\\b`, "i");
+    const match = normalized.match(pattern);
+    if (match) {
+      const actualExpression = match[0].toLowerCase().replace(/\s+/g, " ");
+      if (!found.includes(actualExpression)) found.push(actualExpression);
+    }
+  }
+  return found;
+}
+
+function verbForms(verb) {
+  const forms = new Set([verb, ...(irregularVerbForms[verb] || [])]);
+  if (!irregularVerbForms[verb]) {
+    if (/[^aeiou]y$/.test(verb)) {
+      forms.add(`${verb.slice(0, -1)}ies`); forms.add(`${verb.slice(0, -1)}ied`); forms.add(`${verb}ing`);
+    } else if (verb.endsWith("e")) {
+      forms.add(`${verb}s`); forms.add(`${verb}d`); forms.add(`${verb.slice(0, -1)}ing`);
+    } else {
+      forms.add(`${verb}s`); forms.add(`${verb}ed`); forms.add(`${verb}ing`);
+    }
+  }
+  return [...forms];
+}
+
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 async function populateCandidateTerms(sentence, useCloud) {

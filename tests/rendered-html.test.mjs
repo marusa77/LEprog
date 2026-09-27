@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import vm from "node:vm";
 
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
@@ -21,9 +22,10 @@ test("server-renders the PhraseNest learning app", async () => {
 });
 
 test("ships the extension and cloud schema", async () => {
-  const [manifest, contentScript, panelCss, translateFunction, schema, packageJson] = await Promise.all([
+  const [manifest, contentScript, expressionsScript, panelCss, translateFunction, schema, packageJson] = await Promise.all([
     readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"),
     readFile(new URL("../extension/content-script.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/common-expressions.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/panel.css", import.meta.url), "utf8"),
     readFile(new URL("../supabase/functions/translate/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/0001_initial_schema.sql", import.meta.url), "utf8"),
@@ -31,6 +33,7 @@ test("ships the extension and cloud schema", async () => {
   ]);
   assert.match(manifest, /translate-selection/);
   assert.match(manifest, /Ctrl\+Shift\+Y/);
+  assert.match(manifest, /common-expressions\.js/);
   assert.match(panelCss, /:host\(\[hidden\]\)\s*\{\s*display:\s*none\s*!important/);
   const openTranslator = contentScript.slice(contentScript.indexOf("async function openTranslator"), contentScript.indexOf("function createPanel"));
   assert.ok(openTranslator.indexOf("requestCloudTranslation") < openTranslator.indexOf("translateLocally"));
@@ -40,4 +43,13 @@ test("ships the extension and cloud schema", async () => {
   assert.match(schema, /create or replace function public\.save_capture/i);
   assert.match(schema, /reserve_cloud_translation/i);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
+
+  const extensionContext = { chrome: { runtime: { onMessage: { addListener() {} } } } };
+  vm.createContext(extensionContext);
+  vm.runInContext(expressionsScript, extensionContext);
+  vm.runInContext(contentScript, extensionContext);
+  assert.ok(extensionContext.PHRASE_NEST_COMMON_EXPRESSIONS.length >= 200);
+  const candidates = vm.runInContext('extractCandidates("We finally figured out the problem and ran out of time.")', extensionContext);
+  assert.ok(candidates.includes("figured out"));
+  assert.ok(candidates.includes("ran out of"));
 });

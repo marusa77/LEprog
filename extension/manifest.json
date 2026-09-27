@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PhraseNest - Reddit English Notes",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Redditで選択した英文をその場で翻訳し、単語・熟語と一緒に保存します。",
   "minimum_chrome_version": "138",
   "permissions": ["storage", "identity", "activeTab"],
@@ -15,6 +15,6 @@
       "description": "選択した英文を翻訳する"
     }
   },
-  "content_scripts": [{ "matches": ["https://*.reddit.com/*"], "js": ["content-script.js"], "run_at": "document_idle" }],
+  "content_scripts": [{ "matches": ["https://*.reddit.com/*"], "js": ["common-expressions.js", "content-script.js"], "run_at": "document_idle" }],
   "web_accessible_resources": [{ "resources": ["panel.css"], "matches": ["https://*.reddit.com/*"] }]
 }
