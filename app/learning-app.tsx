@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { captureSessionFromUrl, getStoredSession, getSupabaseConfiguration, loadLearningData, saveSupabaseConfiguration, signInWithGoogle, signOut, submitReview } from "./supabase-browser";
+import { captureSessionFromUrl, getStoredSession, getSupabaseConfiguration, loadLearningData, saveSupabaseConfiguration, signInWithGoogle, signOut, submitReview, updateSentence, updateVocabularyItem } from "./supabase-browser";
 
 type Tab = "today" | "words" | "sentences" | "settings";
 type LearningStatus = "unlearned" | "learning" | "mastered";
@@ -21,6 +21,8 @@ export function LearningApp() {
   const [usage, setUsage] = useState({ cloudCharacters: 0, aiUsd: 0 });
   const [connection, setConnection] = useState<"setup" | "checking" | "signedout" | "live" | "error">("checking");
   const [connectionError, setConnectionError] = useState("");
+  const [editingWord, setEditingWord] = useState<Word | null>(null);
+  const [editingSentence, setEditingSentence] = useState<Sentence | null>(null);
 
   useEffect(() => {
     async function initializeCloudData() {
@@ -69,6 +71,21 @@ export function LearningApp() {
     } catch (error) { setConnectionError(error instanceof Error ? error.message : "復習結果を保存できませんでした"); }
   }
 
+  async function saveWordEdit(changes: { meaning: string; note: string; status: LearningStatus }) {
+    if (!editingWord) return;
+    const updated = await updateVocabularyItem(editingWord.id, changes);
+    setWords((current) => current.map((word) => word.id === editingWord.id ? { ...word, meaning: updated.meaning, note: updated.note, status: updated.status } : word));
+    setEditingWord(null);
+  }
+
+  async function saveSentenceEdit(changes: { translation: string; note: string }) {
+    if (!editingSentence) return;
+    const updated = await updateSentence(editingSentence.id, changes);
+    setSentenceItems((current) => current.map((sentence) => sentence.id === editingSentence.id ? { ...sentence, translation: updated.translation, note: updated.note } : sentence));
+    setWords((current) => current.map((word) => word.example === editingSentence.source ? { ...word, translation: updated.translation } : word));
+    setEditingSentence(null);
+  }
+
   if (connection === "checking") return <LoginGate checking />;
   if (connection === "setup") return <SetupGate onComplete={() => setConnection("signedout")} />;
   if (connection === "signedout") return <LoginGate />;
@@ -90,8 +107,8 @@ export function LearningApp() {
         </aside>
         <section className="content">
           {tab === "today" && <TodayView words={words} reviewWord={reviewWord} revealed={revealed} completed={completed} remaining={Math.max(0, reviewQueue.length - completed)} onReveal={() => setRevealed(true)} onAnswer={answerReview} />}
-          {tab === "words" && <WordsView words={filteredWords} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} />}
-          {tab === "sentences" && <SentencesView sentences={sentenceItems} />}
+          {tab === "words" && <WordsView words={filteredWords} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onEdit={setEditingWord} />}
+          {tab === "sentences" && <SentencesView sentences={sentenceItems} onEdit={setEditingSentence} />}
           {tab === "settings" && <SettingsView connection={connection} error={connectionError} usage={usage} />}
         </section>
       </div>
@@ -101,6 +118,8 @@ export function LearningApp() {
         <NavButton active={tab === "sentences"} label="英文" icon="¶" onClick={() => setTab("sentences")} />
         <NavButton active={tab === "settings"} label="設定" icon="⚙" onClick={() => setTab("settings")} />
       </nav>
+      {editingWord && <WordEditor key={editingWord.id} word={editingWord} onClose={() => setEditingWord(null)} onSave={saveWordEdit} />}
+      {editingSentence && <SentenceEditor key={editingSentence.id} sentence={editingSentence} onClose={() => setEditingSentence(null)} onSave={saveSentenceEdit} />}
     </main>
   );
 }
@@ -111,12 +130,37 @@ function TodayView({ words, reviewWord, revealed, completed, remaining, onReveal
       <aside className="today-summary"><h3>今日の予定</h3><div className="ring" style={{ "--progress": `${Math.min(100, completed * 20)}%` } as React.CSSProperties}><span><strong>{remaining}</strong>語</span></div><SummaryRow kind="new" label="未学習" value={words.filter((w) => w.status === "unlearned").length} /><SummaryRow kind="learning" label="学習中" value={words.filter((w) => w.status === "learning").length} /><SummaryRow kind="mastered" label="覚えた" value={words.filter((w) => w.status === "mastered").length} /></aside></div></>;
 }
 
-function WordsView({ words, filter, query, onFilter, onQuery }: { words: Word[]; filter: LearningStatus | "all"; query: string; onFilter: (value: LearningStatus | "all") => void; onQuery: (value: string) => void }) {
-  return <><PageHeading eyebrow="VOCABULARY" title="単語・熟語" description="Redditで出会った回数と一緒に確認できます。" /><div className="toolbar"><input aria-label="語句を検索" placeholder="語句や意味を検索" value={query} onChange={(event) => onQuery(event.target.value)} /><div className="filter-group">{(["all", "unlearned", "learning", "mastered"] as const).map((value) => <button type="button" key={value} className={filter === value ? "selected" : ""} onClick={() => onFilter(value)}>{value === "all" ? "すべて" : statusLabels[value]}</button>)}</div></div>{words.length ? <div className="word-list">{words.map((word) => <article className="word-row" key={word.id}><div><div className="word-title"><h2>{word.term}</h2><span className={`status ${word.status}`}>{statusLabels[word.status]}</span></div><p>{word.meaning}</p><small>{word.note}</small></div><div className="word-stats"><strong>{word.occurrences}</strong><span>登場回数</span><em>{word.dueLabel}</em></div></article>)}</div> : <div className="list-empty"><h2>語句が見つかりません</h2><p>検索条件を変えるか、Redditから新しい語句を保存してください。</p></div>}</>;
+function WordsView({ words, filter, query, onFilter, onQuery, onEdit }: { words: Word[]; filter: LearningStatus | "all"; query: string; onFilter: (value: LearningStatus | "all") => void; onQuery: (value: string) => void; onEdit: (word: Word) => void }) {
+  return <><PageHeading eyebrow="VOCABULARY" title="単語・熟語" description="Redditで出会った回数と一緒に確認できます。" /><div className="toolbar"><input aria-label="語句を検索" placeholder="語句や意味を検索" value={query} onChange={(event) => onQuery(event.target.value)} /><div className="filter-group">{(["all", "unlearned", "learning", "mastered"] as const).map((value) => <button type="button" key={value} className={filter === value ? "selected" : ""} onClick={() => onFilter(value)}>{value === "all" ? "すべて" : statusLabels[value]}</button>)}</div></div>{words.length ? <div className="word-list">{words.map((word) => <article className="word-row" key={word.id}><div><div className="word-title"><h2>{word.term}</h2><span className={`status ${word.status}`}>{statusLabels[word.status]}</span></div><p>{word.meaning || "意味はまだありません"}</p><small>{word.note || "自分用メモはまだありません"}</small></div><div className="word-actions"><button className="edit-button" type="button" onClick={() => onEdit(word)}>編集</button><div className="word-stats"><strong>{word.occurrences}</strong><span>登場回数</span><em>{word.dueLabel}</em></div></div></article>)}</div> : <div className="list-empty"><h2>語句が見つかりません</h2><p>検索条件を変えるか、Redditから新しい語句を保存してください。</p></div>}</>;
 }
 
-function SentencesView({ sentences }: { sentences: Sentence[] }) {
-  return <><PageHeading eyebrow="SAVED SENTENCES" title="保存した英文" description="元の文脈と、自分の説明を一緒に残します。" />{sentences.length ? <div className="sentence-list">{sentences.map((sentence) => <article className="sentence-card" key={sentence.id}><div className="sentence-meta"><span>{sentence.community}</span><time>{sentence.savedAt}</time></div><h2>{sentence.source}</h2><p className="translation">{sentence.translation}</p>{sentence.note && <p className="personal-note">メモ：{sentence.note}</p>}<div className="term-tags">{sentence.terms.map((term) => <span key={term}>{term}</span>)}</div></article>)}</div> : <div className="list-empty"><h2>保存した英文はまだありません</h2><p>Redditで英文を選択し、Chrome拡張機能から保存してください。</p></div>}</>;
+function SentencesView({ sentences, onEdit }: { sentences: Sentence[]; onEdit: (sentence: Sentence) => void }) {
+  return <><PageHeading eyebrow="SAVED SENTENCES" title="保存した英文" description="元の文脈と、自分の説明を一緒に残します。" />{sentences.length ? <div className="sentence-list">{sentences.map((sentence) => <article className="sentence-card" key={sentence.id}><div className="sentence-meta"><span>{sentence.community}</span><div><time>{sentence.savedAt}</time><button className="edit-button" type="button" onClick={() => onEdit(sentence)}>編集</button></div></div><h2>{sentence.source}</h2><p className="translation">{sentence.translation || "訳はまだありません"}</p>{sentence.note && <p className="personal-note">メモ：{sentence.note}</p>}<div className="term-tags">{sentence.terms.map((term) => <span key={term}>{term}</span>)}</div></article>)}</div> : <div className="list-empty"><h2>保存した英文はまだありません</h2><p>Redditで英文を選択し、Chrome拡張機能から保存してください。</p></div>}</>;
+}
+
+function WordEditor({ word, onClose, onSave }: { word: Word; onClose: () => void; onSave: (changes: { meaning: string; note: string; status: LearningStatus }) => Promise<void> }) {
+  const [meaning, setMeaning] = useState(word.meaning);
+  const [note, setNote] = useState(word.note);
+  const [status, setStatus] = useState(word.status);
+  return <EditDialog title={`${word.term} を編集`} onClose={onClose} onSubmit={() => onSave({ meaning: meaning.trim(), note: note.trim(), status })}><label>意味<input value={meaning} onChange={(event) => setMeaning(event.target.value)} placeholder="日本語の意味" /></label><label>自分用メモ<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="使い方や覚え方など" rows={4} /></label><label>学習状態<select value={status} onChange={(event) => setStatus(event.target.value as LearningStatus)}><option value="unlearned">未学習</option><option value="learning">学習中</option><option value="mastered">覚えた</option></select></label></EditDialog>;
+}
+
+function SentenceEditor({ sentence, onClose, onSave }: { sentence: Sentence; onClose: () => void; onSave: (changes: { translation: string; note: string }) => Promise<void> }) {
+  const [translation, setTranslation] = useState(sentence.translation);
+  const [note, setNote] = useState(sentence.note);
+  return <EditDialog title="英文の訳とメモを編集" onClose={onClose} onSubmit={() => onSave({ translation: translation.trim(), note: note.trim() })}><div className="source-preview"><span>元の英文</span><p>{sentence.source}</p></div><label>自分で直した訳<textarea value={translation} onChange={(event) => setTranslation(event.target.value)} placeholder="英文全体の訳" rows={4} /></label><label>自分用メモ<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="気づいた点や補足説明など" rows={4} /></label></EditDialog>;
+}
+
+function EditDialog({ title, children, onClose, onSubmit }: { title: string; children: React.ReactNode; onClose: () => void; onSubmit: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    setSaving(true); setError("");
+    try { await onSubmit(); }
+    catch (saveError) { setError(saveError instanceof Error ? saveError.message : "変更を保存できませんでした"); setSaving(false); }
+  }
+  return <div className="dialog-backdrop" role="presentation"><form className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-dialog-title" onSubmit={submit}><div className="dialog-heading"><h2 id="edit-dialog-title">{title}</h2><button type="button" aria-label="閉じる" onClick={onClose}>×</button></div><div className="dialog-fields">{children}</div>{error && <p className="connection-error">{error}</p>}<div className="dialog-actions"><button className="plain-action" type="button" onClick={onClose} disabled={saving}>キャンセル</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "保存中…" : "変更を保存"}</button></div></form></div>;
 }
 
 function SettingsView({ connection, error, usage }: { connection: string; error: string; usage: { cloudCharacters: number; aiUsd: number } }) {

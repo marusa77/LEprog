@@ -101,3 +101,23 @@ export async function loadLearningData() {
 export async function submitReview(id: string, result: "forgot" | "uncertain" | "remembered") {
   return rest<{ status: "unlearned" | "learning" | "mastered"; next_review_at: string; interval_days: number }>("/rest/v1/rpc/record_review", { method: "POST", body: JSON.stringify({ p_vocabulary_id: id, p_result: result }) });
 }
+
+export async function updateVocabularyItem(id: string, changes: { meaning: string; note: string; status: "unlearned" | "learning" | "mastered" }) {
+  const rows = await rest<VocabularyRow[]>(`/rest/v1/vocabulary_items?id=eq.${encodeURIComponent(id)}&select=*`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+  });
+  if (!rows[0]) throw new Error("語句を更新できませんでした");
+  return rows[0];
+}
+
+export async function updateSentence(id: string, changes: { translation: string; note: string }) {
+  const rows = await rest<SentenceRow[]>(`/rest/v1/sentences?id=eq.${encodeURIComponent(id)}&select=*`, {
+    method: "PATCH",
+    headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ ...changes, updated_at: new Date().toISOString() }),
+  });
+  if (!rows[0]) throw new Error("英文を更新できませんでした");
+  return rows[0];
+}
