@@ -16,7 +16,7 @@ test("server-renders the PhraseNest learning app", async () => {
   const html = await response.text();
   assert.match(html, /<title>PhraseNest/);
   assert.match(html, /PhraseNest/);
-  assert.match(html, /今日の復習/);
+  assert.match(html, /保存内容を読み込んでいます/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 

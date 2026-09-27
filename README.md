@@ -16,7 +16,9 @@ npm install
 npm run dev
 ```
 
-Supabase未設定時は確認用データが表示されます。
+Supabase未設定時は初回接続画面が表示されます。
+
+初回は画面上でProject URLとPublishable keyを入力できます。Googleログイン前に、画面に表示されるローカルURL（例：`http://localhost:3000/`）をSupabaseのAuthentication > URL Configuration > Redirect URLsへ追加してください。
 
 ## Supabaseを接続
 
