@@ -34,9 +34,20 @@ Deno.serve(async (request) => {
 
 async function reserveAiUsage(request: Request) {
   const url = Deno.env.get("SUPABASE_URL");
-  const key = Deno.env.get("SUPABASE_ANON_KEY");
+  const key = getPublishableKey();
   const authorization = request.headers.get("Authorization");
   if (!url || !key || !authorization) throw new Error("AI利用上限を確認できませんでした");
   const response = await fetch(`${url}/rest/v1/rpc/reserve_ai_request`, { method: "POST", headers: { apikey: key, Authorization: authorization, "Content-Type": "application/json" }, body: JSON.stringify({ p_estimated_usd: 0.001 }) });
   if (!response.ok) throw new Error("今月のAI利用上限に達しました");
+}
+
+function getPublishableKey() {
+  const keys = Deno.env.get("SUPABASE_PUBLISHABLE_KEYS");
+  if (keys) {
+    const key = (JSON.parse(keys) as Record<string, string>).default;
+    if (key) return key;
+  }
+  const legacyKey = Deno.env.get("SUPABASE_ANON_KEY");
+  if (!legacyKey) throw new Error("Supabaseの公開キーを確認できませんでした");
+  return legacyKey;
 }
