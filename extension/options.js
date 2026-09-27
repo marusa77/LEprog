@@ -42,6 +42,8 @@ document.querySelector("#google-login").addEventListener("click", async () => {
   try {
     const { supabaseUrl, supabaseKey } = await chrome.storage.local.get(["supabaseUrl", "supabaseKey"]);
     if (!supabaseUrl || !supabaseKey) throw new Error("先にSupabaseの接続情報を保存してください");
+    setMessage("Supabaseのログイン設定を確認しています…");
+    await verifyGoogleProvider(supabaseUrl, supabaseKey);
     const redirectUrl = chrome.identity.getRedirectURL("supabase");
     const authUrl = `${supabaseUrl}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirectUrl)}`;
     const resultUrl = await chrome.identity.launchWebAuthFlow({ url: authUrl, interactive: true });
@@ -53,9 +55,29 @@ document.querySelector("#google-login").addEventListener("click", async () => {
     if (!accessToken || !refreshToken) throw new Error(params.get("error_description") || "ログイン情報を受け取れませんでした");
     const expiresIn = Number(params.get("expires_in") || 3600);
     await chrome.storage.local.set({ phraseNestSession: { access_token: accessToken, refresh_token: refreshToken, expires_at: Math.floor(Date.now() / 1000) + expiresIn } });
-    showSession(true); setMessage("Googleでログインしました");
-  } catch (error) { setMessage(error.message, true); }
+    showSession(true); setMessage("✓ Googleでログインしました");
+  } catch (error) {
+    const detail = error.message || "Googleログインを開始できませんでした";
+    if (/Authorization page could not be loaded/i.test(detail)) {
+      setMessage("ログイン画面を開けませんでした。Google CloudのAuthorized redirect URIに、Supabaseの『Callback URL』が正確に登録されているか確認してください。", true);
+    } else {
+      setMessage(detail, true);
+    }
+  }
 });
+
+async function verifyGoogleProvider(url, key) {
+  let response;
+  try {
+    response = await fetch(`${url}/auth/v1/settings`, { headers: { apikey: key } });
+  } catch {
+    throw new Error("Supabaseへ接続できません。Project URLを確認してください");
+  }
+  if (response.status === 401 || response.status === 403) throw new Error("Publishable keyが正しいか確認してください");
+  if (!response.ok) throw new Error(`Supabaseの設定確認に失敗しました（${response.status}）`);
+  const settings = await response.json();
+  if (!settings.external?.google) throw new Error("SupabaseでGoogleログインが有効になっていません。Authentication → Sign In / Providers → Googleを確認してください");
+}
 
 document.querySelector("#logout").addEventListener("click", async () => { await chrome.storage.local.remove("phraseNestSession"); showSession(false); setMessage("ログアウトしました"); });
 function showSession(active) { signedOut.hidden = active; signedIn.hidden = !active; }
