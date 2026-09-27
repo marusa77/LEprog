@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ja">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PhraseNest 設定</title><link rel="stylesheet" href="options.css"></head>
+<body>
+  <main>
+    <header><span class="mark">P</span><div><h1>PhraseNestの設定</h1><p>初回だけ設定します。ログイン状態はChromeに保存されます。</p></div></header>
+    <section>
+      <h2>1. Supabaseを接続</h2>
+      <label>Project URL<input id="url" type="url" placeholder="https://xxxxx.supabase.co"></label>
+      <label>Publishable key<input id="key" type="password" placeholder="sb_publishable_..."></label>
+      <button id="save-config" type="button">接続情報を保存</button>
+      <p class="hint">秘密鍵ではなく、公開用のPublishable keyを入力してください。</p>
+    </section>
+    <section>
+      <h2>2. ログイン</h2>
+      <div id="signed-out"><button id="google-login" class="primary" type="button">Googleでログイン</button><p class="hint">初回ログイン後は、通常は入力不要です。</p><p class="hint">SupabaseのRedirect URLに次を追加してください：<code id="redirect-url"></code></p></div>
+      <div id="signed-in" hidden><p class="success">ログイン済みです</p><button id="logout" type="button">ログアウト</button></div>
+    </section>
+    <section><h2>3. 使い方</h2><p>Redditで英文を選択し、<kbd>Ctrl</kbd> ＋ <kbd>Shift</kbd> ＋ <kbd>Y</kbd> を押します。</p><p class="hint">ショートカットは chrome://extensions/shortcuts から変更できます。</p></section>
+    <p id="message" role="status"></p>
+  </main>
+  <script src="options.js"></script>
+</body>
+</html>

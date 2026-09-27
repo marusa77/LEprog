@@ -1,0 +1,7 @@
+project_id = "phrase-nest"
+
+[functions.translate]
+verify_jwt = true
+
+[functions.explain]
+verify_jwt = true
