@@ -21,15 +21,21 @@ test("server-renders the PhraseNest learning app", async () => {
 });
 
 test("ships the extension and cloud schema", async () => {
-  const [manifest, panelCss, schema, packageJson] = await Promise.all([
+  const [manifest, contentScript, panelCss, translateFunction, schema, packageJson] = await Promise.all([
     readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"),
+    readFile(new URL("../extension/content-script.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/panel.css", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/functions/translate/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/0001_initial_schema.sql", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
   assert.match(manifest, /translate-selection/);
   assert.match(manifest, /Ctrl\+Shift\+Y/);
   assert.match(panelCss, /:host\(\[hidden\]\)\s*\{\s*display:\s*none\s*!important/);
+  const openTranslator = contentScript.slice(contentScript.indexOf("async function openTranslator"), contentScript.indexOf("function createPanel"));
+  assert.ok(openTranslator.indexOf("requestCloudTranslation") < openTranslator.indexOf("translateLocally"));
+  assert.match(translateFunction, /monthlyLimit:\s*450000/);
+  assert.match(translateFunction, /q:\s*items/);
   assert.match(schema, /create table public\.vocabulary_items/i);
   assert.match(schema, /create or replace function public\.save_capture/i);
   assert.match(schema, /reserve_cloud_translation/i);

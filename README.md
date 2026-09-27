@@ -24,7 +24,7 @@ Supabase未設定時は確認用データが表示されます。
 2. SQL Editorで `supabase/migrations/0001_initial_schema.sql` を実行します。
 3. Authentication > ProvidersでGoogleを有効にします。
 4. `.env.example` を `.env.local` としてコピーし、Project URLとPublishable keyを設定します。
-5. Google Cloud Translationを使う場合はEdge FunctionのSecretに `GOOGLE_TRANSLATE_API_KEY` を設定します。
+5. Google Cloud Translationを有効にし、Edge FunctionのSecretに `GOOGLE_TRANSLATE_API_KEY` を設定します。
 6. AI解説を使う場合だけ `OPENAI_API_KEY` を設定します。
 7. `translate` と `explain` のEdge Functionをデプロイします。
 
@@ -40,3 +40,5 @@ Supabase未設定時は確認用データが表示されます。
 6. Googleで一度ログインします。
 
 Redditで英文を選択し、`Ctrl + Shift + Y` を押すと翻訳小窓が開きます。Chromeの拡張機能ショートカット画面からキーを変更できます。
+
+翻訳はGoogle Cloud Translationを優先し、月450,000文字で停止します。Google翻訳へ接続できない場合は、Chrome内蔵翻訳へ自動で切り替わります。単語・熟語候補はまとめて翻訳し、通信回数を抑えています。

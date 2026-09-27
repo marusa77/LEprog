@@ -28,24 +28,32 @@ async function openTranslator() {
   root.querySelector("#pn-translation").value = "";
   root.querySelector("#pn-note").value = "";
   root.querySelector("#pn-terms").replaceChildren();
-  setPanelMessage("Chrome内蔵翻訳を準備しています…");
+  root.querySelector("#pn-local").hidden = true;
+  root.querySelector("#pn-cloud").hidden = true;
+  root.querySelector("#pn-provider").textContent = "Google翻訳を準備中";
+  setPanelMessage("Google翻訳で自然な訳を作成しています…");
+  const cloudResult = await requestCloudTranslation([selectedPageText]);
+  if (cloudResult.ok) {
+    root.querySelector("#pn-translation").value = cloudResult.translations[0];
+    root.querySelector("#pn-provider").textContent = formatCloudUsage(cloudResult);
+    await populateCandidateTerms(selectedPageText, true);
+    return;
+  }
+
+  setPanelMessage("Google翻訳を利用できないため、無料の端末内翻訳へ切り替えています…");
   const localResult = await translateLocally(selectedPageText);
   if (localResult.translation) {
     root.querySelector("#pn-translation").value = localResult.translation;
     root.querySelector("#pn-provider").textContent = "端末内翻訳 · ¥0";
-    root.querySelector("#pn-local").hidden = true;
-    root.querySelector("#pn-cloud").hidden = true;
-    await populateCandidateTerms(selectedPageText);
+    await populateCandidateTerms(selectedPageText, false);
   } else if (localResult.needsActivation) {
-    root.querySelector("#pn-provider").textContent = "英日翻訳データの準備が必要です";
+    root.querySelector("#pn-provider").textContent = "端末内翻訳の準備が必要です";
     root.querySelector("#pn-local").hidden = false;
-    root.querySelector("#pn-cloud").hidden = true;
     setPanelMessage("下のボタンを押すと、無料の英日翻訳データをChromeへ準備します。");
   } else {
-    root.querySelector("#pn-provider").textContent = "端末内翻訳を利用できません";
-    root.querySelector("#pn-local").hidden = true;
+    root.querySelector("#pn-provider").textContent = "翻訳を利用できません";
     root.querySelector("#pn-cloud").hidden = false;
-    setPanelMessage("必要な場合だけ、クラウド翻訳を実行できます。");
+    setPanelMessage(`${cloudResult.error} 設定を確認してから再試行してください。`, true);
   }
 }
 
@@ -69,7 +77,7 @@ function createPanel() {
       <label class="pn-label" for="pn-translation">日本語訳</label>
       <textarea id="pn-translation" rows="3" placeholder="翻訳結果は自由に編集できます"></textarea>
       <button id="pn-local" class="pn-primary pn-full" type="button" hidden>端末内翻訳を開始（無料）</button>
-      <button id="pn-cloud" class="pn-secondary pn-full" type="button" hidden>クラウド翻訳を使う</button>
+      <button id="pn-cloud" class="pn-secondary pn-full" type="button" hidden>Google翻訳を再試行</button>
       <label class="pn-label" for="pn-note">自分用の説明・メモ</label>
       <textarea id="pn-note" rows="2" placeholder="直訳では分かりにくい点など"></textarea>
       <div class="pn-section-title"><strong>単語・熟語の候補</strong><span>保存するものにチェック</span></div>
@@ -101,7 +109,7 @@ function bindPanelEvents(root) {
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && phraseNestHost && !phraseNestHost.hidden) phraseNestHost.hidden = true; });
 }
 
-async function addTerm(rawTerm, automatic = false) {
+async function addTerm(rawTerm, automatic = false, suppliedMeaning = "") {
   const root = phraseNestHost.shadowRoot;
   const term = rawTerm.trim().replace(/\s+/g, " ");
   if (!term) return;
@@ -125,13 +133,16 @@ async function addTerm(rawTerm, automatic = false) {
     titleLine.append(badge);
   }
   const meaning = document.createElement("input"); meaning.placeholder = "意味を入力"; meaning.setAttribute("aria-label", `${term}の意味`);
+  meaning.value = suppliedMeaning;
   text.append(titleLine, meaning);
   const actions = document.createElement("div"); actions.className = "pn-term-actions";
   const ai = document.createElement("button"); ai.type = "button"; ai.className = "pn-ai"; ai.textContent = "AI解説"; ai.addEventListener("click", () => explainTerm(term, meaning));
   const remove = document.createElement("button"); remove.type = "button"; remove.className = "pn-remove"; remove.textContent = "×"; remove.setAttribute("aria-label", `${term}を削除`); remove.addEventListener("click", () => row.remove());
   actions.append(ai, remove); row.append(check, text, actions); root.querySelector("#pn-terms").append(row);
-  const localResult = await translateLocally(term);
-  if (localResult.translation) meaning.value = localResult.translation;
+  if (!suppliedMeaning) {
+    const localResult = await translateLocally(term);
+    if (localResult.translation) meaning.value = localResult.translation;
+  }
 }
 
 async function translateLocally(text, allowDownload = false, onProgress = () => {}) {
@@ -152,6 +163,21 @@ async function translateLocally(text, allowDownload = false, onProgress = () => 
   } catch { return { translation: null, needsActivation: false }; }
 }
 
+async function requestCloudTranslation(texts) {
+  const response = await chrome.runtime.sendMessage({
+    type: "TRANSLATE",
+    payload: { texts, source: "en", target: "ja" },
+  });
+  if (!response?.ok) return { ok: false, error: response?.error || "Google翻訳に接続できませんでした。" };
+  const translations = response.result.translations || [response.result.translation];
+  return { ok: true, ...response.result, translations };
+}
+
+function formatCloudUsage(result) {
+  if (typeof result.monthlyCharacters !== "number") return `Google翻訳 · ${result.characters}文字`;
+  return `Google翻訳 · 今月 ${result.monthlyCharacters.toLocaleString()}/${result.monthlyLimit.toLocaleString()}文字`;
+}
+
 async function useLocalTranslation() {
   const root = phraseNestHost.shadowRoot;
   const button = root.querySelector("#pn-local");
@@ -170,18 +196,20 @@ async function useLocalTranslation() {
   root.querySelector("#pn-provider").textContent = "端末内翻訳 · ¥0";
   button.hidden = true;
   root.querySelector("#pn-cloud").hidden = true;
-  await populateCandidateTerms(selectedPageText);
+  await populateCandidateTerms(selectedPageText, false);
 }
 
 async function useCloudTranslation() {
   const root = phraseNestHost.shadowRoot;
-  setPanelMessage("クラウド翻訳中…");
-  const response = await chrome.runtime.sendMessage({ type: "TRANSLATE", payload: { text: selectedPageText, source: "en", target: "ja" } });
-  if (!response?.ok) return setPanelMessage(response?.error || "クラウド翻訳に失敗しました。", true);
-  root.querySelector("#pn-translation").value = response.result.translation;
-  root.querySelector("#pn-provider").textContent = `クラウド翻訳 · ${response.result.characters}文字`;
+  setPanelMessage("Google翻訳中…");
+  const result = await requestCloudTranslation([selectedPageText]);
+  if (!result.ok) return setPanelMessage(result.error, true);
+  root.querySelector("#pn-translation").value = result.translations[0];
+  root.querySelector("#pn-provider").textContent = formatCloudUsage(result);
   root.querySelector("#pn-cloud").hidden = true;
-  await populateCandidateTerms(selectedPageText);
+  root.querySelector("#pn-local").hidden = true;
+  root.querySelector("#pn-terms").replaceChildren();
+  await populateCandidateTerms(selectedPageText, true);
 }
 
 function extractCandidates(sentence) {
@@ -198,13 +226,18 @@ function extractCandidates(sentence) {
   return [...phrases, ...uniqueWords].slice(0, 8);
 }
 
-async function populateCandidateTerms(sentence) {
+async function populateCandidateTerms(sentence, useCloud) {
   const candidates = extractCandidates(sentence);
   if (!candidates.length) return setPanelMessage("単語・熟語の候補は見つかりませんでした。");
   setPanelMessage(`単語・熟語の候補を準備中… 0/${candidates.length}`);
+  let meanings = [];
+  if (useCloud) {
+    const result = await requestCloudTranslation(candidates);
+    if (result.ok) meanings = result.translations;
+  }
   let completed = 0;
-  await Promise.all(candidates.map(async (candidate) => {
-    await addTerm(candidate, true);
+  await Promise.all(candidates.map(async (candidate, index) => {
+    await addTerm(candidate, true, meanings[index] || "");
     completed += 1;
     setPanelMessage(`単語・熟語の候補を準備中… ${completed}/${candidates.length}`);
   }));
