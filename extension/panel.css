@@ -1,4 +1,5 @@
 :host { all: initial; }
+:host([hidden]) { display: none !important; }
 .pn-panel {
   --ink: #17231f; --muted: #69746f; --paper: #f6f4ed; --surface: #fffdf8;
   --line: #deddd4; --green: #1f654f; --green-dark: #154737; --mint: #dcece4; --amber: #d7933d;
