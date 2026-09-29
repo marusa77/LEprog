@@ -4,6 +4,7 @@ let localTranslator;
 const phraseNestReviewUrl = "https://phrasenest-reddit-english.uchimaruyukihiro.chatgpt.site";
 
 const commonExpressions = globalThis.PHRASE_NEST_COMMON_EXPRESSIONS || [];
+const conversationPatterns = globalThis.PHRASE_NEST_CONVERSATION_PATTERNS || [];
 const irregularVerbForms = {
   be: ["am", "is", "are", "was", "were", "been", "being"],
   break: ["breaks", "broke", "broken", "breaking"],
@@ -158,7 +159,7 @@ function openLearningPage(tab) {
   window.open(url.toString(), "_blank", "noopener,noreferrer");
 }
 
-async function addTerm(rawTerm, automatic = false, suppliedMeaning = "") {
+async function addTerm(rawTerm, automatic = false, suppliedMeaning = "", candidateKind = "候補") {
   const root = phraseNestHost.shadowRoot;
   const term = rawTerm.trim().replace(/\s+/g, " ");
   if (!term) return;
@@ -178,7 +179,7 @@ async function addTerm(rawTerm, automatic = false, suppliedMeaning = "") {
   const title = document.createElement("strong"); title.textContent = term;
   titleLine.append(title);
   if (automatic) {
-    const badge = document.createElement("span"); badge.textContent = "候補";
+    const badge = document.createElement("span"); badge.textContent = candidateKind;
     titleLine.append(badge);
   }
   const meaning = document.createElement("input"); meaning.placeholder = "意味を入力"; meaning.setAttribute("aria-label", `${term}の意味`);
@@ -261,15 +262,23 @@ async function useCloudTranslation() {
   await populateCandidateTerms(selectedPageText, true);
 }
 
-function extractCandidates(sentence) {
+function extractCandidateDetails(sentence) {
   const lower = sentence.toLowerCase().replace(/[’]/g, "'");
-  const phrases = findCommonExpressions(lower);
+  const formats = conversationPatterns
+    .filter((format) => format.pattern.test(lower))
+    .map((format) => ({ term: format.term, meaning: format.meaning, kind: "会話の型" }));
+  const formatText = formats.map((format) => format.term.toLowerCase().replace(/[^a-z' ]/g, " ").replace(/\s+/g, " "));
+  const phrases = findCommonExpressions(lower).filter((phrase) => !formatText.some((term) => term.includes(phrase)));
   const words = (lower.match(/[a-z]+(?:'[a-z]+)?/g) || [])
     .filter((word) => word.length >= 4 && !word.includes("'") && !stopWords.has(word));
   const uniqueWords = [...new Set(words)].filter(
     (word) => !phrases.some((phrase) => phrase.split(" ").includes(word)),
   );
-  return [...phrases, ...uniqueWords].slice(0, 12);
+  return [
+    ...formats,
+    ...phrases.map((term) => ({ term, meaning: "", kind: "熟語" })),
+    ...uniqueWords.map((term) => ({ term, meaning: "", kind: "単語" })),
+  ].filter((candidate, index, all) => all.findIndex((item) => item.term.toLowerCase() === candidate.term.toLowerCase()) === index).slice(0, 12);
 }
 
 function findCommonExpressions(sentence) {
@@ -311,17 +320,17 @@ function escapeRegExp(value) {
 }
 
 async function populateCandidateTerms(sentence, useCloud) {
-  const candidates = extractCandidates(sentence);
+  const candidates = extractCandidateDetails(sentence);
   if (!candidates.length) return setPanelMessage("単語・熟語の候補は見つかりませんでした。");
   setPanelMessage(`単語・熟語の候補を準備中… 0/${candidates.length}`);
-  let meanings = [];
-  if (useCloud) {
-    const result = await requestCloudTranslation(candidates);
-    if (result.ok) meanings = result.translations;
+  const needsTranslation = candidates.filter((candidate) => !candidate.meaning);
+  if (useCloud && needsTranslation.length) {
+    const result = await requestCloudTranslation(needsTranslation.map((candidate) => candidate.term));
+    if (result.ok) needsTranslation.forEach((candidate, index) => { candidate.meaning = result.translations[index] || ""; });
   }
   let completed = 0;
-  await Promise.all(candidates.map(async (candidate, index) => {
-    await addTerm(candidate, true, meanings[index] || "");
+  await Promise.all(candidates.map(async (candidate) => {
+    await addTerm(candidate.term, true, candidate.meaning, candidate.kind);
     completed += 1;
     setPanelMessage(`単語・熟語の候補を準備中… ${completed}/${candidates.length}`);
   }));

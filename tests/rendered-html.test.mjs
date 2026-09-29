@@ -22,10 +22,11 @@ test("server-renders the PhraseNest learning app", async () => {
 });
 
 test("ships the extension and cloud schema", async () => {
-  const [manifest, contentScript, expressionsScript, panelCss, translateFunction, schema, packageJson] = await Promise.all([
+  const [manifest, contentScript, expressionsScript, patternsScript, panelCss, translateFunction, schema, packageJson] = await Promise.all([
     readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"),
     readFile(new URL("../extension/content-script.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/common-expressions.js", import.meta.url), "utf8"),
+    readFile(new URL("../extension/conversation-patterns.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/panel.css", import.meta.url), "utf8"),
     readFile(new URL("../supabase/functions/translate/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/0001_initial_schema.sql", import.meta.url), "utf8"),
@@ -34,6 +35,7 @@ test("ships the extension and cloud schema", async () => {
   assert.match(manifest, /translate-selection/);
   assert.match(manifest, /Ctrl\+Shift\+Y/);
   assert.match(manifest, /common-expressions\.js/);
+  assert.match(manifest, /conversation-patterns\.js/);
   assert.match(contentScript, /保存内容を見る/);
   assert.match(contentScript, /今日の復習/);
   assert.match(contentScript, /searchParams\.set\("tab"/);
@@ -50,9 +52,13 @@ test("ships the extension and cloud schema", async () => {
   const extensionContext = { chrome: { runtime: { onMessage: { addListener() {} } } } };
   vm.createContext(extensionContext);
   vm.runInContext(expressionsScript, extensionContext);
+  vm.runInContext(patternsScript, extensionContext);
   vm.runInContext(contentScript, extensionContext);
   assert.ok(extensionContext.PHRASE_NEST_COMMON_EXPRESSIONS.length >= 200);
-  const candidates = vm.runInContext('extractCandidates("We finally figured out the problem and ran out of time.")', extensionContext);
+  const candidates = vm.runInContext('extractCandidateDetails("We finally figured out the problem and ran out of time.").map((candidate) => candidate.term)', extensionContext);
   assert.ok(candidates.includes("figured out"));
   assert.ok(candidates.includes("ran out of"));
+  const formatCandidates = vm.runInContext(`extractCandidateDetails("How's the weather there? I'd like some coffee.")`, extensionContext);
+  assert.ok(formatCandidates.some((candidate) => candidate.term === "How's ... there?" && candidate.meaning.includes("そちら")));
+  assert.ok(formatCandidates.some((candidate) => candidate.term === "I'd like ..." && candidate.meaning.includes("欲しい")));
 });
