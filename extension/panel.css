@@ -49,6 +49,8 @@ textarea { resize: vertical; }
 .pn-remove { font-size: 18px; }
 .pn-message { min-height: 20px; margin: 12px 0 0; color: var(--green); font-size: 11px; font-weight: 700; }
 .pn-message.pn-error { color: #a4473e; }
+.pn-app-links { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; padding: 12px 0; border-top: 1px solid var(--line); }
+.pn-app-links button { padding: 9px 10px; font-size: 11px; }
 footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 8px; }
 @media (max-width: 520px) {
   .pn-panel { right: 8px; top: 8px; width: calc(100vw - 16px); max-height: calc(100vh - 16px); }

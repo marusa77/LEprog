@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { captureSessionFromUrl, getStoredSession, getSupabaseConfiguration, loadLearningData, saveSupabaseConfiguration, signInWithGoogle, signOut, submitReview, updateSentence, updateVocabularyItem } from "./supabase-browser";
+import { captureSessionFromUrl, consumeReturnTab, getStoredSession, getSupabaseConfiguration, loadLearningData, saveSupabaseConfiguration, signInWithGoogle, signOut, submitReview, updateSentence, updateVocabularyItem } from "./supabase-browser";
 
 type Tab = "today" | "words" | "sentences" | "settings";
 type LearningStatus = "unlearned" | "learning" | "mastered";
@@ -10,8 +10,14 @@ type Sentence = { id: string; source: string; translation: string; note: string;
 
 const statusLabels: Record<LearningStatus, string> = { unlearned: "未学習", learning: "学習中", mastered: "覚えた" };
 
+function getInitialTab(): Tab {
+  if (typeof window === "undefined") return "today";
+  const requestedTab = new URLSearchParams(window.location.search).get("tab") || consumeReturnTab();
+  return requestedTab === "words" || requestedTab === "sentences" || requestedTab === "settings" ? requestedTab : "today";
+}
+
 export function LearningApp() {
-  const [tab, setTab] = useState<Tab>("today");
+  const [tab, setTab] = useState<Tab>(getInitialTab);
   const [words, setWords] = useState<Word[]>([]);
   const [revealed, setRevealed] = useState(false);
   const [completed, setCompleted] = useState(0);
@@ -86,6 +92,14 @@ export function LearningApp() {
     setEditingSentence(null);
   }
 
+  function selectTab(nextTab: Tab) {
+    setTab(nextTab);
+    const url = new URL(window.location.href);
+    if (nextTab === "today") url.searchParams.delete("tab");
+    else url.searchParams.set("tab", nextTab);
+    history.replaceState(null, "", `${url.pathname}${url.search}`);
+  }
+
   if (connection === "checking") return <LoginGate checking />;
   if (connection === "setup") return <SetupGate onComplete={() => setConnection("signedout")} />;
   if (connection === "signedout") return <LoginGate />;
@@ -93,17 +107,17 @@ export function LearningApp() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <button className="brand" type="button" onClick={() => setTab("today")} aria-label="ホームへ"><span className="brand-mark">P</span><span><strong>PhraseNest</strong><small>Reddit English Notes</small></span></button>
+        <button className="brand" type="button" onClick={() => selectTab("today")} aria-label="ホームへ"><span className="brand-mark">P</span><span><strong>PhraseNest</strong><small>Reddit English Notes</small></span></button>
         <div className={`sync-state ${connection}`}><span /> {connection === "live" ? "Supabaseと同期済み" : connection === "error" ? "接続エラー" : "デモデータ"}</div>
       </header>
       <div className="workspace">
         <aside className="sidebar" aria-label="メインメニュー">
           <nav>
-            <NavButton active={tab === "today"} label="今日の復習" count={reviewQueue.length} icon="◎" onClick={() => setTab("today")} />
-            <NavButton active={tab === "words"} label="単語・熟語" count={words.length} icon="A" onClick={() => setTab("words")} />
-            <NavButton active={tab === "sentences"} label="保存した英文" count={sentenceItems.length} icon="¶" onClick={() => setTab("sentences")} />
+            <NavButton active={tab === "today"} label="今日の復習" count={reviewQueue.length} icon="◎" onClick={() => selectTab("today")} />
+            <NavButton active={tab === "words"} label="単語・熟語" count={words.length} icon="A" onClick={() => selectTab("words")} />
+            <NavButton active={tab === "sentences"} label="保存した英文" count={sentenceItems.length} icon="¶" onClick={() => selectTab("sentences")} />
           </nav>
-          <button className={`nav-button ${tab === "settings" ? "active" : ""}`} type="button" onClick={() => setTab("settings")}><span className="nav-icon">⚙</span><span>設定</span></button>
+          <button className={`nav-button ${tab === "settings" ? "active" : ""}`} type="button" onClick={() => selectTab("settings")}><span className="nav-icon">⚙</span><span>設定</span></button>
         </aside>
         <section className="content">
           {tab === "today" && <TodayView words={words} reviewWord={reviewWord} revealed={revealed} completed={completed} remaining={Math.max(0, reviewQueue.length - completed)} onReveal={() => setRevealed(true)} onAnswer={answerReview} />}
@@ -113,10 +127,10 @@ export function LearningApp() {
         </section>
       </div>
       <nav className="mobile-nav" aria-label="モバイルメニュー">
-        <NavButton active={tab === "today"} label="復習" icon="◎" onClick={() => setTab("today")} />
-        <NavButton active={tab === "words"} label="語句" icon="A" onClick={() => setTab("words")} />
-        <NavButton active={tab === "sentences"} label="英文" icon="¶" onClick={() => setTab("sentences")} />
-        <NavButton active={tab === "settings"} label="設定" icon="⚙" onClick={() => setTab("settings")} />
+        <NavButton active={tab === "today"} label="復習" icon="◎" onClick={() => selectTab("today")} />
+        <NavButton active={tab === "words"} label="語句" icon="A" onClick={() => selectTab("words")} />
+        <NavButton active={tab === "sentences"} label="英文" icon="¶" onClick={() => selectTab("sentences")} />
+        <NavButton active={tab === "settings"} label="設定" icon="⚙" onClick={() => selectTab("settings")} />
       </nav>
       {editingWord && <WordEditor key={editingWord.id} word={editingWord} onClose={() => setEditingWord(null)} onSave={saveWordEdit} />}
       {editingSentence && <SentenceEditor key={editingSentence.id} sentence={editingSentence} onClose={() => setEditingSentence(null)} onSave={saveSentenceEdit} />}

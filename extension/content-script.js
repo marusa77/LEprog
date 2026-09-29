@@ -1,6 +1,7 @@
 let phraseNestHost;
 let selectedPageText = "";
 let localTranslator;
+const phraseNestReviewUrl = "https://phrasenest-reddit-english.uchimaruyukihiro.chatgpt.site";
 
 const commonExpressions = globalThis.PHRASE_NEST_COMMON_EXPRESSIONS || [];
 const irregularVerbForms = {
@@ -123,6 +124,7 @@ function createPanel() {
       <div class="pn-add-row"><input id="pn-term-input" type="text" placeholder="例：on the fence"><button id="pn-add-term" class="pn-secondary" type="button">追加</button></div>
       <div id="pn-terms" class="pn-terms"></div>
       <p id="pn-message" class="pn-message" role="status"></p>
+      <div class="pn-app-links"><button id="pn-open-library" class="pn-secondary" type="button">保存内容を見る</button><button id="pn-open-review" class="pn-secondary" type="button">今日の復習</button></div>
       <footer><button id="pn-settings" class="pn-plain" type="button">設定</button><button id="pn-save" class="pn-primary" type="button">英文と語句を保存</button></footer>
     </div>`;
   shadow.append(panel);
@@ -134,6 +136,8 @@ function createPanel() {
 function bindPanelEvents(root) {
   root.querySelector("#pn-close").addEventListener("click", () => { phraseNestHost.hidden = true; });
   root.querySelector("#pn-settings").addEventListener("click", () => chrome.runtime.openOptionsPage());
+  root.querySelector("#pn-open-library").addEventListener("click", () => openLearningPage("sentences"));
+  root.querySelector("#pn-open-review").addEventListener("click", () => openLearningPage("today"));
   root.querySelector("#pn-use-selection").addEventListener("click", () => {
     const selection = root.getSelection?.()?.toString().trim() || window.getSelection()?.toString().trim();
     if (!selection) return setPanelMessage("英文の中から語句を選択してください。", true);
@@ -146,6 +150,12 @@ function bindPanelEvents(root) {
   root.querySelector("#pn-cloud").addEventListener("click", useCloudTranslation);
   root.querySelector("#pn-save").addEventListener("click", saveCapture);
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && phraseNestHost && !phraseNestHost.hidden) phraseNestHost.hidden = true; });
+}
+
+function openLearningPage(tab) {
+  const url = new URL(phraseNestReviewUrl);
+  if (tab !== "today") url.searchParams.set("tab", tab);
+  window.open(url.toString(), "_blank", "noopener,noreferrer");
 }
 
 async function addTerm(rawTerm, automatic = false, suppliedMeaning = "") {

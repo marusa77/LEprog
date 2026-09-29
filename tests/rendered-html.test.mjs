@@ -34,6 +34,9 @@ test("ships the extension and cloud schema", async () => {
   assert.match(manifest, /translate-selection/);
   assert.match(manifest, /Ctrl\+Shift\+Y/);
   assert.match(manifest, /common-expressions\.js/);
+  assert.match(contentScript, /保存内容を見る/);
+  assert.match(contentScript, /今日の復習/);
+  assert.match(contentScript, /searchParams\.set\("tab"/);
   assert.match(panelCss, /:host\(\[hidden\]\)\s*\{\s*display:\s*none\s*!important/);
   const openTranslator = contentScript.slice(contentScript.indexOf("async function openTranslator"), contentScript.indexOf("function createPanel"));
   assert.ok(openTranslator.indexOf("requestCloudTranslation") < openTranslator.indexOf("translateLocally"));

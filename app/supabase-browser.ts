@@ -9,6 +9,7 @@ const envProjectUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") |
 const envPublishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
 const sessionStorageKey = "phrase-nest-web-session";
 const configStorageKey = "phrase-nest-web-config";
+const returnTabStorageKey = "phrase-nest-web-return-tab";
 
 export function getSupabaseConfiguration(): SupabaseConfiguration | null {
   if (typeof window !== "undefined") {
@@ -54,8 +55,16 @@ export function getStoredSession(): BrowserSession | null {
 export function signInWithGoogle() {
   const config = getSupabaseConfiguration();
   if (!config) throw new Error("Supabaseの接続設定が必要です");
+  const requestedTab = new URLSearchParams(window.location.search).get("tab");
+  if (requestedTab) localStorage.setItem(returnTabStorageKey, requestedTab);
   const redirect = `${window.location.origin}${window.location.pathname}`;
   window.location.href = `${config.projectUrl}/auth/v1/authorize?provider=google&redirect_to=${encodeURIComponent(redirect)}`;
+}
+
+export function consumeReturnTab() {
+  const value = localStorage.getItem(returnTabStorageKey);
+  localStorage.removeItem(returnTabStorageKey);
+  return value;
 }
 
 export function signOut() {
