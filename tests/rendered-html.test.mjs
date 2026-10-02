@@ -62,9 +62,11 @@ test("ships the extension and cloud schema", async () => {
   assert.match(organizationMigration, /organization_changes/i);
   assert.match(organizationModule, /maxItems: 50, maxCharacters: 20000/);
   assert.match(organizationModule, /estimatedTokens/);
+  assert.match(organizationModule, /countPendingOrganizationItems/);
   assert.match(organizationGuide, /元のメモ、訳、コアイメージは変更しない/);
   assert.match(learningApp, /Codex整理/);
   assert.match(learningApp, /整理用JSONを保存/);
+  assert.match(learningApp, /件が未整理/);
   assert.match(schema, /reserve_cloud_translation/i);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 

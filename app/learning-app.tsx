@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { applyOrganizationResult, captureSessionFromUrl, consumeReturnTab, getStoredSession, getSupabaseConfiguration, loadLearningData, saveSupabaseConfiguration, signInWithGoogle, signOut, submitReview, updateSentence, updateVocabularyItem } from "./supabase-browser";
-import { buildOrganizationExport, exportPresets, OrganizationResult, OrganizationSuggestion, parseOrganizationResult } from "./organization";
+import { buildOrganizationExport, countPendingOrganizationItems, exportPresets, OrganizationResult, OrganizationSuggestion, parseOrganizationResult } from "./organization";
 
 type Tab = "today" | "words" | "sentences" | "notes" | "organize" | "settings";
 type LearningStatus = "unlearned" | "learning" | "mastered";
@@ -108,8 +108,7 @@ export function LearningApp() {
   if (connection === "signedout") return <LoginGate />;
 
   const noteCount = words.filter((word) => word.coreImage).length + words.filter((word) => word.note).length + sentenceItems.filter((sentence) => sentence.note).length;
-  const organizationCount = sentenceItems.filter((sentence) => needsOrganization(sentence.updatedAt, sentence.organizationCheckedAt)).length
-    + words.filter((word) => word.note && needsOrganization(word.updatedAt, word.organizationCheckedAt)).length;
+  const organizationCount = countPendingOrganizationItems(words, sentenceItems);
 
   return (
     <main className="app-shell">
@@ -190,6 +189,7 @@ function OrganizationView({ words, sentences }: { words: Word[]; sentences: Sent
   const [message, setMessage] = useState("");
   const [applying, setApplying] = useState(false);
   const exportData = useMemo(() => buildOrganizationExport(words, sentences, exportPresets[presetIndex]), [words, sentences, presetIndex]);
+  const pendingCount = useMemo(() => countPendingOrganizationItems(words, sentences), [words, sentences]);
   const undecidedCount = result?.suggestions.filter((suggestion) => (decisions[suggestion.id] || "pending") === "pending").length || 0;
 
   function downloadExport() {
@@ -239,11 +239,11 @@ function OrganizationView({ words, sentences }: { words: Word[]; sentences: Sent
   }
 
   return <>
-    <PageHeading eyebrow="CODEX ORGANIZER" title="定期整理" description="新しく追加・編集した分だけをCodexへ渡し、候補を確認してから保存します。" />
+    <PageHeading eyebrow="CODEX ORGANIZER" title="定期整理" description="新しく追加・編集した分だけをCodexへ渡し、候補を確認してから保存します。" extra={<div className="progress-chip organizer-pending"><strong>{pendingCount}</strong><span>未整理</span></div>} />
     <div className="organizer-steps">
       <section className="organizer-card">
         <span className="step-number">1</span><div><h2>未整理分を書き出す</h2><p>元のメモは変更されません。長い文章は自動で省略し、トークン消費を抑えます。</p></div>
-        <div className="organizer-controls"><label>一度に処理する量<select value={presetIndex} onChange={(event) => setPresetIndex(Number(event.target.value))}>{exportPresets.map((preset, index) => <option value={index} key={preset.label}>{preset.label}：最大{preset.maxItems}件</option>)}</select></label><div className="token-estimate"><strong>{exportData.itemCount}</strong><span>件</span><strong>約{exportData.estimatedTokens.toLocaleString()}</strong><span>トークン以下の目安</span></div></div>
+        <div className="organizer-controls"><label>一度に処理する量<select value={presetIndex} onChange={(event) => setPresetIndex(Number(event.target.value))}>{exportPresets.map((preset, index) => <option value={index} key={preset.label}>{preset.label}：最大{preset.maxItems}件</option>)}</select></label><div className="token-estimate"><strong>{pendingCount}</strong><span>件が未整理</span><strong>{exportData.itemCount}</strong><span>件を今回書き出し</span><strong>約{exportData.estimatedTokens.toLocaleString()}</strong><span>トークン以下の目安</span></div></div>
         <div className="organizer-actions"><button className="primary-button" type="button" onClick={downloadExport} disabled={!exportData.itemCount}>整理用JSONを保存</button><button className="plain-action" type="button" onClick={copyRequest}>依頼文をコピー</button></div>
         {!exportData.itemCount && <p className="organizer-done">現在、未整理のデータはありません。</p>}
       </section>
@@ -330,8 +330,4 @@ function formatDueLabel(value: string) {
   if (difference <= 0) return "今日";
   const days = Math.max(1, Math.ceil(difference / 86400000));
   return days === 1 ? "明日" : `${days}日後`;
-}
-
-function needsOrganization(updatedAt: string, checkedAt: string | null) {
-  return !checkedAt || new Date(updatedAt).getTime() > new Date(checkedAt).getTime();
 }

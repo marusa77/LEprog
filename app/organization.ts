@@ -66,6 +66,11 @@ function isPending(updatedAt: string, checkedAt: string | null) {
   return !checkedAt || new Date(updatedAt).getTime() > new Date(checkedAt).getTime();
 }
 
+export function countPendingOrganizationItems(words: ExportWord[], sentences: ExportSentence[]) {
+  return sentences.filter((sentence) => isPending(sentence.updatedAt, sentence.organizationCheckedAt)).length
+    + words.filter((word) => word.note && isPending(word.updatedAt, word.organizationCheckedAt)).length;
+}
+
 function clip(value: string, limit: number) {
   if (value.length <= limit) return value;
   return `${value.slice(0, limit)}…（省略）`;

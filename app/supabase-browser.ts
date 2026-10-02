@@ -95,13 +95,23 @@ async function rest<T>(path: string, init: RequestInit = {}): Promise<T> {
   return result as T;
 }
 
+async function restPaged<T>(path: string, pageSize = 500): Promise<T[]> {
+  const rows: T[] = [];
+  for (let offset = 0; ; offset += pageSize) {
+    const separator = path.includes("?") ? "&" : "?";
+    const page = await rest<T[]>(`${path}${separator}limit=${pageSize}&offset=${offset}`);
+    rows.push(...page);
+    if (page.length < pageSize) return rows;
+  }
+}
+
 export async function loadLearningData() {
   const month = new Date();
   const monthStart = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}-01`;
   const [vocabulary, savedSentences, links, usageRows] = await Promise.all([
-    rest<VocabularyRow[]>("/rest/v1/vocabulary_items?select=*&order=next_review_at.asc"),
-    rest<SentenceRow[]>("/rest/v1/sentences?select=*&order=created_at.desc&limit=100"),
-    rest<SentenceVocabularyRow[]>("/rest/v1/sentence_vocabulary?select=sentence_id,vocabulary_id,selected_text"),
+    restPaged<VocabularyRow>("/rest/v1/vocabulary_items?select=*&order=next_review_at.asc"),
+    restPaged<SentenceRow>("/rest/v1/sentences?select=*&order=created_at.desc"),
+    restPaged<SentenceVocabularyRow>("/rest/v1/sentence_vocabulary?select=sentence_id,vocabulary_id,selected_text"),
     rest<MonthlyUsageRow[]>(`/rest/v1/monthly_usage?select=cloud_translation_characters,ai_estimated_usd&month=eq.${monthStart}&limit=1`),
   ]);
   return { vocabulary, savedSentences, links, usage: usageRows[0] || { cloud_translation_characters: 0, ai_estimated_usd: 0 } };
