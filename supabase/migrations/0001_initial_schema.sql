@@ -21,6 +21,7 @@ create table public.vocabulary_items (
   normalized_term text not null,
   base_form text,
   meaning text not null default '',
+  core_image text not null default '',
   note text not null default '',
   status text not null default 'unlearned' check (status in ('unlearned','learning','mastered')),
   occurrence_count integer not null default 1 check (occurrence_count > 0),
@@ -119,11 +120,13 @@ begin
         priority_score = priority_score + 1,
         last_seen_at = now(),
         meaning = case when nullif(meaning,'') is null then coalesce(v_term->>'meaning','') else meaning end,
+        core_image = case when nullif(core_image,'') is null then coalesce(v_term->>'core_image','') else core_image end,
+        note = case when nullif(note,'') is null then coalesce(v_term->>'note','') else note end,
         updated_at = now()
       where id = v_vocabulary_id;
     else
-      insert into public.vocabulary_items(user_id, term, normalized_term, meaning, note)
-      values(v_user_id, trim(v_term->>'term'), lower(regexp_replace(trim(v_term->>'term'), '\s+', ' ', 'g')), coalesce(v_term->>'meaning',''), coalesce(v_term->>'note',''))
+      insert into public.vocabulary_items(user_id, term, normalized_term, meaning, core_image, note)
+      values(v_user_id, trim(v_term->>'term'), lower(regexp_replace(trim(v_term->>'term'), '\s+', ' ', 'g')), coalesce(v_term->>'meaning',''), coalesce(v_term->>'core_image',''), coalesce(v_term->>'note',''))
       returning id into v_vocabulary_id;
     end if;
 

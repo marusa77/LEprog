@@ -68,6 +68,8 @@ async function openTranslator() {
   root.querySelector("#pn-source").textContent = selectedPageText;
   root.querySelector("#pn-translation").value = "";
   root.querySelector("#pn-note").value = "";
+  resizeLongTextarea(root.querySelector("#pn-translation"));
+  resizeLongTextarea(root.querySelector("#pn-note"));
   root.querySelector("#pn-terms").replaceChildren();
   root.querySelector("#pn-local").hidden = true;
   root.querySelector("#pn-cloud").hidden = true;
@@ -76,6 +78,7 @@ async function openTranslator() {
   const cloudResult = await requestCloudTranslation([selectedPageText]);
   if (cloudResult.ok) {
     root.querySelector("#pn-translation").value = cloudResult.translations[0];
+    resizeLongTextarea(root.querySelector("#pn-translation"));
     root.querySelector("#pn-provider").textContent = formatCloudUsage(cloudResult);
     await populateCandidateTerms(selectedPageText, true);
     return;
@@ -85,6 +88,7 @@ async function openTranslator() {
   const localResult = await translateLocally(selectedPageText);
   if (localResult.translation) {
     root.querySelector("#pn-translation").value = localResult.translation;
+    resizeLongTextarea(root.querySelector("#pn-translation"));
     root.querySelector("#pn-provider").textContent = "端末内翻訳 · ¥0";
     await populateCandidateTerms(selectedPageText, false);
   } else if (localResult.needsActivation) {
@@ -125,7 +129,7 @@ function createPanel() {
       <div class="pn-add-row"><input id="pn-term-input" type="text" placeholder="例：on the fence"><button id="pn-add-term" class="pn-secondary" type="button">追加</button></div>
       <div id="pn-terms" class="pn-terms"></div>
       <p id="pn-message" class="pn-message" role="status"></p>
-      <div class="pn-app-links"><button id="pn-open-library" class="pn-secondary" type="button">保存内容を見る</button><button id="pn-open-review" class="pn-secondary" type="button">今日の復習</button></div>
+      <div class="pn-app-links"><button id="pn-open-library" class="pn-secondary" type="button">保存内容</button><button id="pn-open-notes" class="pn-secondary" type="button">学習メモ</button><button id="pn-open-review" class="pn-secondary" type="button">今日の復習</button></div>
       <footer><button id="pn-settings" class="pn-plain" type="button">設定</button><button id="pn-save" class="pn-primary" type="button">英文と語句を保存</button></footer>
     </div>`;
   shadow.append(panel);
@@ -135,9 +139,14 @@ function createPanel() {
 }
 
 function bindPanelEvents(root) {
+  [root.querySelector("#pn-translation"), root.querySelector("#pn-note")].forEach((textarea) => {
+    textarea.addEventListener("input", () => resizeLongTextarea(textarea));
+    resizeLongTextarea(textarea);
+  });
   root.querySelector("#pn-close").addEventListener("click", () => { phraseNestHost.hidden = true; });
   root.querySelector("#pn-settings").addEventListener("click", () => chrome.runtime.openOptionsPage());
   root.querySelector("#pn-open-library").addEventListener("click", () => openLearningPage("sentences"));
+  root.querySelector("#pn-open-notes").addEventListener("click", () => openLearningPage("notes"));
   root.querySelector("#pn-open-review").addEventListener("click", () => openLearningPage("today"));
   root.querySelector("#pn-use-selection").addEventListener("click", () => {
     const selection = root.getSelection?.()?.toString().trim() || window.getSelection()?.toString().trim();
@@ -151,6 +160,15 @@ function bindPanelEvents(root) {
   root.querySelector("#pn-cloud").addEventListener("click", useCloudTranslation);
   root.querySelector("#pn-save").addEventListener("click", saveCapture);
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && phraseNestHost && !phraseNestHost.hidden) phraseNestHost.hidden = true; });
+}
+
+function resizeLongTextarea(textarea) {
+  if (!textarea) return;
+  const maximumHeight = 260;
+  textarea.style.height = "auto";
+  const nextHeight = Math.min(textarea.scrollHeight, maximumHeight);
+  textarea.style.height = `${nextHeight}px`;
+  textarea.style.overflowY = textarea.scrollHeight > maximumHeight ? "auto" : "hidden";
 }
 
 function openLearningPage(tab) {
@@ -182,9 +200,22 @@ async function addTerm(rawTerm, automatic = false, suppliedMeaning = "", candida
     const badge = document.createElement("span"); badge.textContent = candidateKind;
     titleLine.append(badge);
   }
-  const meaning = document.createElement("input"); meaning.placeholder = "意味を入力"; meaning.setAttribute("aria-label", `${term}の意味`);
+  const meaning = document.createElement("input"); meaning.className = "pn-meaning"; meaning.placeholder = "意味を入力"; meaning.setAttribute("aria-label", `${term}の意味`);
   meaning.value = suppliedMeaning;
-  text.append(titleLine, meaning);
+  const detailsToggle = document.createElement("button"); detailsToggle.type = "button"; detailsToggle.className = "pn-term-more"; detailsToggle.textContent = "＋ コアイメージ・詳しいメモ";
+  const details = document.createElement("div"); details.className = "pn-term-details"; details.hidden = true;
+  const coreLabel = document.createElement("label"); coreLabel.textContent = "コアイメージ";
+  const coreImage = document.createElement("textarea"); coreImage.className = "pn-core-image"; coreImage.rows = 3; coreImage.placeholder = "表現の中心となる感覚やイメージ"; coreImage.setAttribute("aria-label", `${term}のコアイメージ`);
+  const noteLabel = document.createElement("label"); noteLabel.textContent = "自由メモ";
+  const note = document.createElement("textarea"); note.className = "pn-term-note"; note.rows = 3; note.placeholder = "使い分け、文法、自分なりの覚え方など"; note.setAttribute("aria-label", `${term}の自由メモ`);
+  coreLabel.append(coreImage); noteLabel.append(note); details.append(coreLabel, noteLabel);
+  detailsToggle.addEventListener("click", () => {
+    details.hidden = !details.hidden;
+    detailsToggle.textContent = details.hidden ? "＋ コアイメージ・詳しいメモ" : "− 詳しいメモを閉じる";
+    if (!details.hidden) coreImage.focus();
+  });
+  [coreImage, note].forEach((textarea) => textarea.addEventListener("input", () => resizeLongTextarea(textarea)));
+  text.append(titleLine, meaning, detailsToggle, details);
   const actions = document.createElement("div"); actions.className = "pn-term-actions";
   const ai = document.createElement("button"); ai.type = "button"; ai.className = "pn-ai"; ai.textContent = "AI解説"; ai.addEventListener("click", () => explainTerm(term, meaning));
   const remove = document.createElement("button"); remove.type = "button"; remove.className = "pn-remove"; remove.textContent = "×"; remove.setAttribute("aria-label", `${term}を削除`); remove.addEventListener("click", () => row.remove());
@@ -243,6 +274,7 @@ async function useLocalTranslation() {
     return setPanelMessage("端末内翻訳を利用できませんでした。Chromeの更新またはクラウド翻訳をお試しください。", true);
   }
   root.querySelector("#pn-translation").value = result.translation;
+  resizeLongTextarea(root.querySelector("#pn-translation"));
   root.querySelector("#pn-provider").textContent = "端末内翻訳 · ¥0";
   button.hidden = true;
   root.querySelector("#pn-cloud").hidden = true;
@@ -255,6 +287,7 @@ async function useCloudTranslation() {
   const result = await requestCloudTranslation([selectedPageText]);
   if (!result.ok) return setPanelMessage(result.error, true);
   root.querySelector("#pn-translation").value = result.translations[0];
+  resizeLongTextarea(root.querySelector("#pn-translation"));
   root.querySelector("#pn-provider").textContent = formatCloudUsage(result);
   root.querySelector("#pn-cloud").hidden = true;
   root.querySelector("#pn-local").hidden = true;
@@ -355,8 +388,9 @@ async function saveCapture() {
     .filter((row) => row.querySelector(".pn-term-check").checked)
     .map((row) => ({
       term: row.querySelector("strong").textContent,
-      meaning: row.querySelector(".pn-term-text input").value,
-      note: "",
+      meaning: row.querySelector(".pn-meaning").value,
+      core_image: row.querySelector(".pn-core-image").value,
+      note: row.querySelector(".pn-term-note").value,
     }));
   const pathMatch = location.pathname.match(/\/r\/([^/]+)/i);
   const payload = { p_original_text: selectedPageText, p_machine_translation: root.querySelector("#pn-translation").value, p_translation: root.querySelector("#pn-translation").value, p_note: root.querySelector("#pn-note").value, p_source_url: location.href, p_source_title: document.title, p_subreddit: pathMatch ? `r/${pathMatch[1]}` : null, p_terms: terms };

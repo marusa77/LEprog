@@ -1,5 +1,5 @@
 export type BrowserSession = { access_token: string; refresh_token: string; expires_at: number; user?: { email?: string } };
-export type VocabularyRow = { id: string; term: string; meaning: string; note: string; status: "unlearned" | "learning" | "mastered"; occurrence_count: number; next_review_at: string };
+export type VocabularyRow = { id: string; term: string; meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered"; occurrence_count: number; next_review_at: string };
 export type SentenceRow = { id: string; original_text: string; translation: string; note: string; subreddit: string | null; created_at: string };
 export type SentenceVocabularyRow = { sentence_id: string; vocabulary_id: string; selected_text: string };
 export type MonthlyUsageRow = { cloud_translation_characters: number; ai_estimated_usd: number | string };
@@ -111,7 +111,7 @@ export async function submitReview(id: string, result: "forgot" | "uncertain" | 
   return rest<{ status: "unlearned" | "learning" | "mastered"; next_review_at: string; interval_days: number }>("/rest/v1/rpc/record_review", { method: "POST", body: JSON.stringify({ p_vocabulary_id: id, p_result: result }) });
 }
 
-export async function updateVocabularyItem(id: string, changes: { meaning: string; note: string; status: "unlearned" | "learning" | "mastered" }) {
+export async function updateVocabularyItem(id: string, changes: { meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered" }) {
   const rows = await rest<VocabularyRow[]>(`/rest/v1/vocabulary_items?id=eq.${encodeURIComponent(id)}&select=*`, {
     method: "PATCH",
     headers: { Prefer: "return=representation" },

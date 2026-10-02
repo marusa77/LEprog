@@ -22,7 +22,7 @@ test("server-renders the PhraseNest learning app", async () => {
 });
 
 test("ships the extension and cloud schema", async () => {
-  const [manifest, contentScript, expressionsScript, patternsScript, panelCss, translateFunction, schema, packageJson] = await Promise.all([
+  const [manifest, contentScript, expressionsScript, patternsScript, panelCss, translateFunction, schema, coreImageMigration, packageJson] = await Promise.all([
     readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"),
     readFile(new URL("../extension/content-script.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/common-expressions.js", import.meta.url), "utf8"),
@@ -30,13 +30,16 @@ test("ships the extension and cloud schema", async () => {
     readFile(new URL("../extension/panel.css", import.meta.url), "utf8"),
     readFile(new URL("../supabase/functions/translate/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/0001_initial_schema.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/0002_core_image_notes.sql", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
   assert.match(manifest, /translate-selection/);
   assert.match(manifest, /Ctrl\+Shift\+Y/);
   assert.match(manifest, /common-expressions\.js/);
   assert.match(manifest, /conversation-patterns\.js/);
-  assert.match(contentScript, /保存内容を見る/);
+  assert.match(contentScript, /保存内容/);
+  assert.match(contentScript, /学習メモ/);
+  assert.match(contentScript, /core_image/);
   assert.match(contentScript, /今日の復習/);
   assert.match(contentScript, /searchParams\.set\("tab"/);
   assert.match(panelCss, /:host\(\[hidden\]\)\s*\{\s*display:\s*none\s*!important/);
@@ -46,6 +49,8 @@ test("ships the extension and cloud schema", async () => {
   assert.match(translateFunction, /q:\s*items/);
   assert.match(schema, /create table public\.vocabulary_items/i);
   assert.match(schema, /create or replace function public\.save_capture/i);
+  assert.match(coreImageMigration, /add column if not exists core_image/i);
+  assert.match(coreImageMigration, /v_term->>'core_image'/i);
   assert.match(schema, /reserve_cloud_translation/i);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 
