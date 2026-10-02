@@ -1,19 +1,20 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { captureSessionFromUrl, consumeReturnTab, getStoredSession, getSupabaseConfiguration, loadLearningData, saveSupabaseConfiguration, signInWithGoogle, signOut, submitReview, updateSentence, updateVocabularyItem } from "./supabase-browser";
+import { applyOrganizationResult, captureSessionFromUrl, consumeReturnTab, getStoredSession, getSupabaseConfiguration, loadLearningData, saveSupabaseConfiguration, signInWithGoogle, signOut, submitReview, updateSentence, updateVocabularyItem } from "./supabase-browser";
+import { buildOrganizationExport, exportPresets, OrganizationResult, OrganizationSuggestion, parseOrganizationResult } from "./organization";
 
-type Tab = "today" | "words" | "sentences" | "notes" | "settings";
+type Tab = "today" | "words" | "sentences" | "notes" | "organize" | "settings";
 type LearningStatus = "unlearned" | "learning" | "mastered";
-type Word = { id: string; term: string; meaning: string; coreImage: string; note: string; status: LearningStatus; occurrences: number; dueLabel: string; example: string; translation: string };
-type Sentence = { id: string; source: string; translation: string; note: string; community: string; savedAt: string; terms: string[] };
+type Word = { id: string; term: string; meaning: string; coreImage: string; note: string; status: LearningStatus; occurrences: number; dueLabel: string; example: string; translation: string; updatedAt: string; organizationCheckedAt: string | null };
+type Sentence = { id: string; source: string; translation: string; note: string; community: string; savedAt: string; terms: string[]; updatedAt: string; organizationCheckedAt: string | null };
 
 const statusLabels: Record<LearningStatus, string> = { unlearned: "未学習", learning: "学習中", mastered: "覚えた" };
 
 function getInitialTab(): Tab {
   if (typeof window === "undefined") return "today";
   const requestedTab = new URLSearchParams(window.location.search).get("tab") || consumeReturnTab();
-  return requestedTab === "words" || requestedTab === "sentences" || requestedTab === "notes" || requestedTab === "settings" ? requestedTab : "today";
+  return requestedTab === "words" || requestedTab === "sentences" || requestedTab === "notes" || requestedTab === "organize" || requestedTab === "settings" ? requestedTab : "today";
 }
 
 export function LearningApp() {
@@ -43,7 +44,7 @@ export function LearningApp() {
         setWords(vocabulary.map((word) => {
           const exampleLink = links.find((link) => link.vocabulary_id === word.id);
           const exampleSentence = exampleLink ? sentenceById.get(exampleLink.sentence_id) : undefined;
-          return { id: word.id, term: word.term, meaning: word.meaning, coreImage: word.core_image || "", note: word.note, status: word.status, occurrences: word.occurrence_count, dueLabel: formatDueLabel(word.next_review_at), example: exampleSentence?.original_text || "", translation: exampleSentence?.translation || "" };
+          return { id: word.id, term: word.term, meaning: word.meaning, coreImage: word.core_image || "", note: word.note, status: word.status, occurrences: word.occurrence_count, dueLabel: formatDueLabel(word.next_review_at), example: exampleSentence?.original_text || "", translation: exampleSentence?.translation || "", updatedAt: word.updated_at, organizationCheckedAt: word.organization_checked_at };
         }));
         setSentenceItems(savedSentences.map((sentence) => ({
           id: sentence.id,
@@ -53,6 +54,8 @@ export function LearningApp() {
           community: sentence.subreddit || "Reddit",
           savedAt: new Intl.DateTimeFormat("ja-JP", { month: "short", day: "numeric" }).format(new Date(sentence.created_at)),
           terms: links.filter((link) => link.sentence_id === sentence.id).map((link) => vocabularyById.get(link.vocabulary_id)?.term || link.selected_text),
+          updatedAt: sentence.updated_at,
+          organizationCheckedAt: sentence.organization_checked_at,
         })));
         setUsage({ cloudCharacters: currentUsage.cloud_translation_characters, aiUsd: Number(currentUsage.ai_estimated_usd) || 0 });
         setConnection("live");
@@ -80,14 +83,14 @@ export function LearningApp() {
   async function saveWordEdit(changes: { meaning: string; core_image: string; note: string; status: LearningStatus }) {
     if (!editingWord) return;
     const updated = await updateVocabularyItem(editingWord.id, changes);
-    setWords((current) => current.map((word) => word.id === editingWord.id ? { ...word, meaning: updated.meaning, coreImage: updated.core_image, note: updated.note, status: updated.status } : word));
+    setWords((current) => current.map((word) => word.id === editingWord.id ? { ...word, meaning: updated.meaning, coreImage: updated.core_image, note: updated.note, status: updated.status, updatedAt: updated.updated_at, organizationCheckedAt: updated.organization_checked_at } : word));
     setEditingWord(null);
   }
 
   async function saveSentenceEdit(changes: { translation: string; note: string }) {
     if (!editingSentence) return;
     const updated = await updateSentence(editingSentence.id, changes);
-    setSentenceItems((current) => current.map((sentence) => sentence.id === editingSentence.id ? { ...sentence, translation: updated.translation, note: updated.note } : sentence));
+    setSentenceItems((current) => current.map((sentence) => sentence.id === editingSentence.id ? { ...sentence, translation: updated.translation, note: updated.note, updatedAt: updated.updated_at, organizationCheckedAt: updated.organization_checked_at } : sentence));
     setWords((current) => current.map((word) => word.example === editingSentence.source ? { ...word, translation: updated.translation } : word));
     setEditingSentence(null);
   }
@@ -105,6 +108,8 @@ export function LearningApp() {
   if (connection === "signedout") return <LoginGate />;
 
   const noteCount = words.filter((word) => word.coreImage).length + words.filter((word) => word.note).length + sentenceItems.filter((sentence) => sentence.note).length;
+  const organizationCount = sentenceItems.filter((sentence) => needsOrganization(sentence.updatedAt, sentence.organizationCheckedAt)).length
+    + words.filter((word) => word.note && needsOrganization(word.updatedAt, word.organizationCheckedAt)).length;
 
   return (
     <main className="app-shell">
@@ -119,6 +124,7 @@ export function LearningApp() {
             <NavButton active={tab === "words"} label="単語・熟語" count={words.length} icon="A" onClick={() => selectTab("words")} />
             <NavButton active={tab === "sentences"} label="保存した英文" count={sentenceItems.length} icon="¶" onClick={() => selectTab("sentences")} />
             <NavButton active={tab === "notes"} label="学習メモ" count={noteCount} icon="✎" onClick={() => selectTab("notes")} />
+            <NavButton active={tab === "organize"} label="Codex整理" count={organizationCount} icon="◇" onClick={() => selectTab("organize")} />
           </nav>
           <button className={`nav-button ${tab === "settings" ? "active" : ""}`} type="button" onClick={() => selectTab("settings")}><span className="nav-icon">⚙</span><span>設定</span></button>
         </aside>
@@ -127,6 +133,7 @@ export function LearningApp() {
           {tab === "words" && <WordsView words={filteredWords} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onEdit={setEditingWord} />}
           {tab === "sentences" && <SentencesView sentences={sentenceItems} onEdit={setEditingSentence} />}
           {tab === "notes" && <NotesView words={words} sentences={sentenceItems} onEditWord={setEditingWord} onEditSentence={setEditingSentence} />}
+          {tab === "organize" && <OrganizationView words={words} sentences={sentenceItems} />}
           {tab === "settings" && <SettingsView connection={connection} error={connectionError} usage={usage} />}
         </section>
       </div>
@@ -135,6 +142,7 @@ export function LearningApp() {
         <NavButton active={tab === "words"} label="語句" icon="A" onClick={() => selectTab("words")} />
         <NavButton active={tab === "sentences"} label="英文" icon="¶" onClick={() => selectTab("sentences")} />
         <NavButton active={tab === "notes"} label="メモ" icon="✎" onClick={() => selectTab("notes")} />
+        <NavButton active={tab === "organize"} label="整理" icon="◇" onClick={() => selectTab("organize")} />
         <NavButton active={tab === "settings"} label="設定" icon="⚙" onClick={() => selectTab("settings")} />
       </nav>
       {editingWord && <WordEditor key={editingWord.id} word={editingWord} onClose={() => setEditingWord(null)} onSave={saveWordEdit} />}
@@ -171,6 +179,89 @@ function NotesView({ words, sentences, onEditWord, onEditSentence }: { words: Wo
   const visibleNotes = notes.filter((note) => (filter === "all" || note.kind === filter) && (!needle || `${note.title} ${note.body} ${note.context}`.toLowerCase().includes(needle)));
   const labels: Record<NoteFilter, string> = { all: "すべて", core: "コアイメージ", word: "語句メモ", sentence: "英文メモ" };
   return <><PageHeading eyebrow="LEARNING NOTES" title="学習メモ" description="コアイメージや自分の説明を、メモだけ続けて確認できます。" /><div className="toolbar"><input aria-label="学習メモを検索" placeholder="語句・英文・メモ本文を検索" value={query} onChange={(event) => setQuery(event.target.value)} /><div className="filter-group">{(["all", "core", "word", "sentence"] as const).map((value) => <button type="button" key={value} className={filter === value ? "selected" : ""} onClick={() => setFilter(value)}>{labels[value]}</button>)}</div></div>{visibleNotes.length ? <div className="note-list">{visibleNotes.map((note) => <article className={`note-card ${note.kind}`} key={note.id}><div className="note-card-heading"><div><span>{note.label}</span><h2>{note.title}</h2></div><button className="edit-button" type="button" onClick={note.edit}>編集</button></div><p className="note-body">{note.body}</p>{note.context && <p className="note-context">{note.context}</p>}</article>)}</div> : <div className="list-empty"><h2>表示できるメモがありません</h2><p>絞り込みを変えるか、語句や英文にメモを追加してください。</p></div>}</>;
+}
+
+type SuggestionDecision = "pending" | "accepted" | "rejected";
+
+function OrganizationView({ words, sentences }: { words: Word[]; sentences: Sentence[] }) {
+  const [presetIndex, setPresetIndex] = useState(1);
+  const [result, setResult] = useState<OrganizationResult | null>(null);
+  const [decisions, setDecisions] = useState<Record<string, SuggestionDecision>>({});
+  const [message, setMessage] = useState("");
+  const [applying, setApplying] = useState(false);
+  const exportData = useMemo(() => buildOrganizationExport(words, sentences, exportPresets[presetIndex]), [words, sentences, presetIndex]);
+  const undecidedCount = result?.suggestions.filter((suggestion) => (decisions[suggestion.id] || "pending") === "pending").length || 0;
+
+  function downloadExport() {
+    if (!exportData.itemCount) return;
+    const blob = new Blob([exportData.serialized], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${exportData.payload.export_id}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+    setMessage("整理用ファイルを保存しました。依頼文と一緒にCodexへ渡してください。");
+  }
+
+  async function copyRequest() {
+    try {
+      await navigator.clipboard.writeText("PhraseNestの整理をお願いします。添付したJSONと docs/organization-guide.md に従い、元のメモを変更せず、結果JSONを作成してください。");
+      setMessage("Codexへの依頼文をコピーしました。");
+    } catch { setMessage("コピーできませんでした。『PhraseNestの整理をお願いします』とCodexへ伝えてください。"); }
+  }
+
+  async function importResult(file?: File) {
+    if (!file) return;
+    try {
+      const parsed = parseOrganizationResult(await file.text());
+      setResult(parsed);
+      setDecisions(Object.fromEntries(parsed.suggestions.map((suggestion) => [suggestion.id, "pending"])));
+      setMessage(`${parsed.suggestions.length}件の整理候補を読み込みました。内容を確認してください。`);
+    } catch (error) {
+      setResult(null);
+      setMessage(error instanceof Error ? error.message : "整理結果を読み込めませんでした");
+    }
+  }
+
+  async function finishOrganization() {
+    if (!result || undecidedCount) return;
+    setApplying(true);
+    setMessage("");
+    try {
+      const accepted = result.suggestions.filter((suggestion) => decisions[suggestion.id] === "accepted");
+      await applyOrganizationResult(result.processed_sources, accepted as unknown as Array<Record<string, unknown>>);
+      window.location.reload();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "整理結果を保存できませんでした");
+      setApplying(false);
+    }
+  }
+
+  return <>
+    <PageHeading eyebrow="CODEX ORGANIZER" title="定期整理" description="新しく追加・編集した分だけをCodexへ渡し、候補を確認してから保存します。" />
+    <div className="organizer-steps">
+      <section className="organizer-card">
+        <span className="step-number">1</span><div><h2>未整理分を書き出す</h2><p>元のメモは変更されません。長い文章は自動で省略し、トークン消費を抑えます。</p></div>
+        <div className="organizer-controls"><label>一度に処理する量<select value={presetIndex} onChange={(event) => setPresetIndex(Number(event.target.value))}>{exportPresets.map((preset, index) => <option value={index} key={preset.label}>{preset.label}：最大{preset.maxItems}件</option>)}</select></label><div className="token-estimate"><strong>{exportData.itemCount}</strong><span>件</span><strong>約{exportData.estimatedTokens.toLocaleString()}</strong><span>トークン以下の目安</span></div></div>
+        <div className="organizer-actions"><button className="primary-button" type="button" onClick={downloadExport} disabled={!exportData.itemCount}>整理用JSONを保存</button><button className="plain-action" type="button" onClick={copyRequest}>依頼文をコピー</button></div>
+        {!exportData.itemCount && <p className="organizer-done">現在、未整理のデータはありません。</p>}
+      </section>
+      <section className="organizer-card">
+        <span className="step-number">2</span><div><h2>Codexの結果を読み込む</h2><p>Codexが作った結果JSONを選びます。この時点ではSupabaseを変更しません。</p></div>
+        <label className="file-button">整理結果JSONを選ぶ<input type="file" accept="application/json,.json" onChange={(event) => void importResult(event.target.files?.[0])} /></label>
+      </section>
+    </div>
+    {message && <p className="organizer-message" role="status">{message}</p>}
+    {result && <section className="suggestion-section"><div className="suggestion-heading"><div><p className="eyebrow">REVIEW BEFORE SAVE</p><h2>整理候補を確認</h2></div><span>{undecidedCount}件 未確認</span></div>{result.suggestions.length ? <div className="suggestion-list">{result.suggestions.map((suggestion) => <SuggestionCard key={suggestion.id} suggestion={suggestion} decision={decisions[suggestion.id] || "pending"} words={words} sentences={sentences} onDecision={(decision) => setDecisions((current) => ({ ...current, [suggestion.id]: decision }))} />)}</div> : <div className="list-empty"><h2>追加候補はありませんでした</h2><p>確認済みとして完了すると、同じデータを次回もう一度送らずに済みます。</p></div>}<div className="organizer-finish"><p>採用しない候補があっても、元のメモは残ります。</p><button className="primary-button" type="button" disabled={applying || undecidedCount > 0} onClick={() => void finishOrganization()}>{applying ? "保存中…" : "確認した内容で整理を完了"}</button></div></section>}
+  </>;
+}
+
+function SuggestionCard({ suggestion, decision, words, sentences, onDecision }: { suggestion: OrganizationSuggestion; decision: SuggestionDecision; words: Word[]; sentences: Sentence[]; onDecision: (decision: SuggestionDecision) => void }) {
+  const word = words.find((item) => item.id === suggestion.vocabulary_id);
+  const sentence = sentences.find((item) => item.id === suggestion.sentence_id);
+  const confidenceLabel = { high: "確信度 高", medium: "確信度 中", low: "要確認" }[suggestion.confidence];
+  return <article className={`suggestion-card ${decision}`}><div className="suggestion-meta"><span>{suggestion.type === "core_image" ? "コアイメージ" : "新しい熟語"}</span><em>{confidenceLabel}</em></div><h3>{suggestion.type === "core_image" ? word?.term || "語句" : suggestion.term}</h3>{suggestion.type === "core_image" ? <div className="suggestion-compare"><div><small>現在</small><p>{word?.coreImage || "未登録"}</p></div><div><small>整理候補</small><p>{suggestion.proposed_core_image}</p></div></div> : <><p className="suggestion-value">{suggestion.meaning || "意味は未入力"}</p>{sentence && <blockquote>{sentence.source}</blockquote>}</>}<p className="suggestion-reason">理由：{suggestion.reason}</p><div className="suggestion-actions"><button type="button" className={decision === "rejected" ? "selected reject" : ""} onClick={() => onDecision("rejected")}>使わない</button><button type="button" className={decision === "accepted" ? "selected accept" : ""} onClick={() => onDecision("accepted")}>採用する</button></div></article>;
 }
 
 function WordEditor({ word, onClose, onSave }: { word: Word; onClose: () => void; onSave: (changes: { meaning: string; core_image: string; note: string; status: LearningStatus }) => Promise<void> }) {
@@ -239,4 +330,8 @@ function formatDueLabel(value: string) {
   if (difference <= 0) return "今日";
   const days = Math.max(1, Math.ceil(difference / 86400000));
   return days === 1 ? "明日" : `${days}日後`;
+}
+
+function needsOrganization(updatedAt: string, checkedAt: string | null) {
+  return !checkedAt || new Date(updatedAt).getTime() > new Date(checkedAt).getTime();
 }

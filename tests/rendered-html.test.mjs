@@ -22,8 +22,9 @@ test("server-renders the PhraseNest learning app", async () => {
 });
 
 test("ships the extension and cloud schema", async () => {
-  const [manifest, contentScript, expressionsScript, patternsScript, panelCss, translateFunction, schema, coreImageMigration, packageJson] = await Promise.all([
+  const [manifest, serviceWorker, contentScript, expressionsScript, patternsScript, panelCss, translateFunction, schema, coreImageMigration, organizationMigration, organizationModule, organizationGuide, learningApp, packageJson] = await Promise.all([
     readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"),
+    readFile(new URL("../extension/service-worker.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/content-script.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/common-expressions.js", import.meta.url), "utf8"),
     readFile(new URL("../extension/conversation-patterns.js", import.meta.url), "utf8"),
@@ -31,6 +32,10 @@ test("ships the extension and cloud schema", async () => {
     readFile(new URL("../supabase/functions/translate/index.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/0001_initial_schema.sql", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/0002_core_image_notes.sql", import.meta.url), "utf8"),
+    readFile(new URL("../supabase/migrations/0003_organization_workflow.sql", import.meta.url), "utf8"),
+    readFile(new URL("../app/organization.ts", import.meta.url), "utf8"),
+    readFile(new URL("../docs/organization-guide.md", import.meta.url), "utf8"),
+    readFile(new URL("../app/learning-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
   assert.match(manifest, /translate-selection/);
@@ -40,6 +45,7 @@ test("ships the extension and cloud schema", async () => {
   assert.match(contentScript, /保存内容/);
   assert.match(contentScript, /学習メモ/);
   assert.match(contentScript, /core_image/);
+  assert.match(contentScript, /GET_CUSTOM_PATTERNS/);
   assert.match(contentScript, /今日の復習/);
   assert.match(contentScript, /searchParams\.set\("tab"/);
   assert.match(panelCss, /:host\(\[hidden\]\)\s*\{\s*display:\s*none\s*!important/);
@@ -51,6 +57,14 @@ test("ships the extension and cloud schema", async () => {
   assert.match(schema, /create or replace function public\.save_capture/i);
   assert.match(coreImageMigration, /add column if not exists core_image/i);
   assert.match(coreImageMigration, /v_term->>'core_image'/i);
+  assert.match(serviceWorker, /custom_phrase_patterns/);
+  assert.match(organizationMigration, /apply_organization_result/i);
+  assert.match(organizationMigration, /organization_changes/i);
+  assert.match(organizationModule, /maxItems: 50, maxCharacters: 20000/);
+  assert.match(organizationModule, /estimatedTokens/);
+  assert.match(organizationGuide, /元のメモ、訳、コアイメージは変更しない/);
+  assert.match(learningApp, /Codex整理/);
+  assert.match(learningApp, /整理用JSONを保存/);
   assert.match(schema, /reserve_cloud_translation/i);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 

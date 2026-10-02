@@ -5,6 +5,8 @@ const phraseNestReviewUrl = "https://phrasenest-reddit-english.uchimaruyukihiro.
 
 const commonExpressions = globalThis.PHRASE_NEST_COMMON_EXPRESSIONS || [];
 const conversationPatterns = globalThis.PHRASE_NEST_CONVERSATION_PATTERNS || [];
+let customExpressions = [];
+let customExpressionMeanings = new Map();
 const irregularVerbForms = {
   be: ["am", "is", "are", "was", "were", "been", "being"],
   break: ["breaks", "broke", "broken", "breaking"],
@@ -75,11 +77,13 @@ async function openTranslator() {
   root.querySelector("#pn-cloud").hidden = true;
   root.querySelector("#pn-provider").textContent = "Google翻訳を準備中";
   setPanelMessage("Google翻訳で自然な訳を作成しています…");
+  const customExpressionsReady = refreshCustomExpressions();
   const cloudResult = await requestCloudTranslation([selectedPageText]);
   if (cloudResult.ok) {
     root.querySelector("#pn-translation").value = cloudResult.translations[0];
     resizeLongTextarea(root.querySelector("#pn-translation"));
     root.querySelector("#pn-provider").textContent = formatCloudUsage(cloudResult);
+    await customExpressionsReady;
     await populateCandidateTerms(selectedPageText, true);
     return;
   }
@@ -90,6 +94,7 @@ async function openTranslator() {
     root.querySelector("#pn-translation").value = localResult.translation;
     resizeLongTextarea(root.querySelector("#pn-translation"));
     root.querySelector("#pn-provider").textContent = "端末内翻訳 · ¥0";
+    await customExpressionsReady;
     await populateCandidateTerms(selectedPageText, false);
   } else if (localResult.needsActivation) {
     root.querySelector("#pn-provider").textContent = "端末内翻訳の準備が必要です";
@@ -100,6 +105,15 @@ async function openTranslator() {
     root.querySelector("#pn-cloud").hidden = false;
     setPanelMessage(`${cloudResult.error} 設定を確認してから再試行してください。`, true);
   }
+}
+
+async function refreshCustomExpressions() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "GET_CUSTOM_PATTERNS" });
+    if (!response?.ok || !Array.isArray(response.result)) return;
+    customExpressions = response.result.map((item) => item.term).filter(Boolean);
+    customExpressionMeanings = new Map(response.result.map((item) => [item.term.toLowerCase(), item.meaning || ""]));
+  } catch { /* Custom phrases are optional. */ }
 }
 
 function createPanel() {
@@ -309,7 +323,7 @@ function extractCandidateDetails(sentence) {
   );
   return [
     ...formats,
-    ...phrases.map((term) => ({ term, meaning: "", kind: "熟語" })),
+    ...phrases.map((term) => ({ term, meaning: customExpressionMeanings.get(term.toLowerCase()) || "", kind: "熟語" })),
     ...uniqueWords.map((term) => ({ term, meaning: "", kind: "単語" })),
   ].filter((candidate, index, all) => all.findIndex((item) => item.term.toLowerCase() === candidate.term.toLowerCase()) === index).slice(0, 12);
 }
@@ -317,7 +331,7 @@ function extractCandidateDetails(sentence) {
 function findCommonExpressions(sentence) {
   const found = [];
   const normalized = sentence.replace(/\s+/g, " ");
-  const longestFirst = [...commonExpressions].sort((left, right) => right.split(" ").length - left.split(" ").length);
+  const longestFirst = [...new Set([...commonExpressions, ...customExpressions.map((term) => term.toLowerCase())])].sort((left, right) => right.split(" ").length - left.split(" ").length);
   for (const expression of longestFirst) {
     const words = expression.split(" ");
     const first = words[0];

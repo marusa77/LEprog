@@ -4,6 +4,8 @@ async function openPanel(tab) {
   catch { /* The Reddit tab may still be loading. */ }
 }
 
+let customPatternCache = { expiresAt: 0, rows: [] };
+
 chrome.commands.onCommand.addListener(async (command) => {
   if (command !== "translate-selection") return;
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -22,6 +24,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "SAVE_CAPTURE") handleSave(message.payload).then(sendResponse);
   else if (message.type === "TRANSLATE") callFunction("translate", message.payload).then(sendResponse);
   else if (message.type === "EXPLAIN") callFunction("explain", message.payload).then(sendResponse);
+  else if (message.type === "GET_CUSTOM_PATTERNS") getCustomPatterns().then(sendResponse);
   else return false;
   return true;
 });
@@ -63,6 +66,15 @@ async function authenticatedFetch(path, init = {}) {
 async function handleSave(payload) {
   try {
     const result = await authenticatedFetch("/rest/v1/rpc/save_capture", { method: "POST", body: JSON.stringify(payload) });
+    return { ok: true, result };
+  } catch (error) { return { ok: false, error: error.message }; }
+}
+
+async function getCustomPatterns() {
+  try {
+    if (customPatternCache.expiresAt > Date.now()) return { ok: true, result: customPatternCache.rows };
+    const result = await authenticatedFetch("/rest/v1/custom_phrase_patterns?select=term,meaning&order=updated_at.desc&limit=500");
+    customPatternCache = { expiresAt: Date.now() + 300000, rows: result };
     return { ok: true, result };
   } catch (error) { return { ok: false, error: error.message }; }
 }
