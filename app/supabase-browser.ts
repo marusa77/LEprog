@@ -1,5 +1,5 @@
 export type BrowserSession = { access_token: string; refresh_token: string; expires_at: number; user?: { email?: string } };
-export type VocabularyRow = { id: string; term: string; meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered"; occurrence_count: number; next_review_at: string; updated_at: string; organization_checked_at: string | null };
+export type VocabularyRow = { id: string; term: string; meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered"; occurrence_count: number; next_review_at: string; created_at: string; updated_at: string; organization_checked_at: string | null };
 export type SentenceRow = { id: string; original_text: string; translation: string; note: string; subreddit: string | null; created_at: string; updated_at: string; organization_checked_at: string | null };
 export type SentenceVocabularyRow = { sentence_id: string; vocabulary_id: string; selected_text: string };
 export type MonthlyUsageRow = { cloud_translation_characters: number; ai_estimated_usd: number | string };

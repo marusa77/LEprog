@@ -1,6 +1,11 @@
 let phraseNestHost;
 let selectedPageText = "";
 let localTranslator;
+let panelPreferences = { wide: false, fontSize: 16, right: 24, top: 24 };
+let savedCaptureSnapshot = null;
+let captureBusy = false;
+let translationGeneration = 0;
+let captureTouched = false;
 const phraseNestReviewUrl = "https://phrasenest-reddit-english.uchimaruyukihiro.chatgpt.site";
 
 const commonExpressions = globalThis.PHRASE_NEST_COMMON_EXPRESSIONS || [];
@@ -62,11 +67,22 @@ chrome.runtime.onMessage.addListener((message) => {
 
 async function openTranslator() {
   const selection = window.getSelection()?.toString().trim() || "";
-  if (selection) selectedPageText = selection;
-  if (!selectedPageText) return showPageToast("先に翻訳する英文を選択してください");
+  if (!selection) { openLauncher(); return; }
+  if (captureBusy) return setPanelMessage("翻訳・保存が終わってから、次の英文を開いてください。", true);
+  if (selectedPageText && captureTouched && isCaptureDirty() && !window.confirm("入力中の内容はまだ保存されていません。新しい英文に切り替えますか？")) return;
+  selectedPageText = selection;
   if (!phraseNestHost) createPanel();
   phraseNestHost.hidden = false;
   const root = phraseNestHost.shadowRoot;
+  root.querySelector("#pn-launcher").hidden = true;
+  root.querySelector("#pn-editor").hidden = false;
+  root.querySelector("#pn-save-footer").hidden = false;
+  savedCaptureSnapshot = null;
+  captureTouched = false;
+  const generation = ++translationGeneration;
+  captureBusy = true;
+  root.querySelector("#pn-save").disabled = true;
+  updateSaveState();
   root.querySelector("#pn-source").textContent = selectedPageText;
   root.querySelector("#pn-translation").value = "";
   root.querySelector("#pn-note").value = "";
@@ -79,12 +95,14 @@ async function openTranslator() {
   setPanelMessage("Google翻訳で自然な訳を作成しています…");
   const customExpressionsReady = refreshCustomExpressions();
   const cloudResult = await requestCloudTranslation([selectedPageText]);
+  if (generation !== translationGeneration) return;
   if (cloudResult.ok) {
     root.querySelector("#pn-translation").value = cloudResult.translations[0];
     resizeLongTextarea(root.querySelector("#pn-translation"));
     root.querySelector("#pn-provider").textContent = formatCloudUsage(cloudResult);
     await customExpressionsReady;
     await populateCandidateTerms(selectedPageText, true);
+    finishTranslation();
     return;
   }
 
@@ -105,6 +123,23 @@ async function openTranslator() {
     root.querySelector("#pn-cloud").hidden = false;
     setPanelMessage(`${cloudResult.error} 設定を確認してから再試行してください。`, true);
   }
+  finishTranslation();
+}
+
+function finishTranslation() {
+  captureBusy = false;
+  phraseNestHost.shadowRoot.querySelector("#pn-save").disabled = false;
+  updateSaveState();
+}
+
+function openLauncher() {
+  if (!phraseNestHost) createPanel();
+  phraseNestHost.hidden = false;
+  const root = phraseNestHost.shadowRoot;
+  root.querySelector("#pn-launcher").hidden = false;
+  root.querySelector("#pn-editor").hidden = true;
+  root.querySelector("#pn-save-footer").hidden = true;
+  root.querySelector("#pn-resume").hidden = !selectedPageText;
 }
 
 async function refreshCustomExpressions() {
@@ -127,29 +162,40 @@ function createPanel() {
   const panel = document.createElement("section");
   panel.className = "pn-panel";
   panel.innerHTML = `
-    <header class="pn-header" id="pn-drag"><div class="pn-brand"><span>P</span><div><strong>PhraseNest</strong><small id="pn-provider">端末内翻訳 · ¥0</small></div></div><button id="pn-close" class="pn-icon" type="button" aria-label="閉じる">×</button></header>
-    <div class="pn-body">
+    <div class="pn-top">
+      <header class="pn-header" id="pn-drag"><div class="pn-brand"><span>P</span><div><strong>PhraseNest</strong><small id="pn-provider">英語学習ノート</small></div></div><div class="pn-header-actions"><button id="pn-wide" class="pn-secondary" type="button" aria-pressed="false">ワイド</button><button id="pn-close" class="pn-icon" type="button" aria-label="閉じる">×</button></div></header>
+      <nav class="pn-app-links" aria-label="保存内容と復習"><button id="pn-open-review" class="pn-secondary" type="button">今日の復習</button><button id="pn-open-words" class="pn-secondary" type="button">単語・熟語</button><button id="pn-open-library" class="pn-secondary" type="button">保存内容</button><button id="pn-open-notes" class="pn-secondary" type="button">学習メモ</button><button id="pn-open-organize" class="pn-secondary" type="button">整理</button></nav>
+    </div>
+    <div id="pn-launcher" class="pn-body pn-launcher" hidden><h2>今日は何を確認しますか？</h2><p>上のメニューから、保存内容や復習をすぐに開けます。</p><p>翻訳するときはRedditの英文を選択して、Ctrl + Shift + Y を押してください。</p><button id="pn-resume" class="pn-secondary pn-full" type="button" hidden>入力中の英文に戻る</button></div>
+    <div class="pn-body" id="pn-editor">
+      <div class="pn-text-grid"><div>
       <label class="pn-label">選択した英文</label>
       <div id="pn-source" class="pn-source" tabindex="0"></div>
       <p class="pn-help">単語はダブルクリック、熟語はドラッグして選択できます。</p>
       <button id="pn-use-selection" class="pn-link" type="button">選択した語句を追加</button>
+      </div><div>
       <label class="pn-label" for="pn-translation">日本語訳</label>
       <textarea id="pn-translation" rows="3" placeholder="翻訳結果は自由に編集できます"></textarea>
       <button id="pn-local" class="pn-primary pn-full" type="button" hidden>端末内翻訳を開始（無料）</button>
       <button id="pn-cloud" class="pn-secondary pn-full" type="button" hidden>Google翻訳を再試行</button>
+      </div></div>
       <label class="pn-label" for="pn-note">自分用の説明・メモ</label>
       <textarea id="pn-note" rows="2" placeholder="直訳では分かりにくい点など"></textarea>
       <div class="pn-section-title"><strong>単語・熟語の候補</strong><span>保存するものにチェック</span></div>
       <div class="pn-add-row"><input id="pn-term-input" type="text" placeholder="例：on the fence"><button id="pn-add-term" class="pn-secondary" type="button">追加</button></div>
       <div id="pn-terms" class="pn-terms"></div>
       <p id="pn-message" class="pn-message" role="status"></p>
-      <div class="pn-app-links"><button id="pn-open-library" class="pn-secondary" type="button">保存内容</button><button id="pn-open-notes" class="pn-secondary" type="button">学習メモ</button><button id="pn-open-review" class="pn-secondary" type="button">今日の復習</button></div>
-      <footer><button id="pn-settings" class="pn-plain" type="button">設定</button><button id="pn-save" class="pn-primary" type="button">英文と語句を保存</button></footer>
-    </div>`;
+    </div>
+    <div class="pn-preferences"><button id="pn-settings" class="pn-plain" type="button">設定</button><label>文字サイズ <select id="pn-font-size"><option value="14">標準</option><option value="16" selected>大きめ</option><option value="18">さらに大きめ</option></select></label></div>
+    <footer id="pn-save-footer"><div><span id="pn-save-state" role="status">未保存</span><small id="pn-save-hint">訳・メモは保存ボタンで保存されます。</small></div><button id="pn-save" class="pn-primary" type="button">英文と語句を保存</button></footer>`;
   shadow.append(panel);
   document.documentElement.append(phraseNestHost);
   bindPanelEvents(shadow);
   enableDragging(panel, shadow.querySelector("#pn-drag"));
+  chrome.storage.local.get("phraseNestPanelPreferences").then(({ phraseNestPanelPreferences }) => {
+    if (phraseNestPanelPreferences) panelPreferences = { ...panelPreferences, ...phraseNestPanelPreferences };
+    applyPanelPreferences();
+  });
 }
 
 function bindPanelEvents(root) {
@@ -162,6 +208,24 @@ function bindPanelEvents(root) {
   root.querySelector("#pn-open-library").addEventListener("click", () => openLearningPage("sentences"));
   root.querySelector("#pn-open-notes").addEventListener("click", () => openLearningPage("notes"));
   root.querySelector("#pn-open-review").addEventListener("click", () => openLearningPage("today"));
+  root.querySelector("#pn-open-words").addEventListener("click", () => openLearningPage("words"));
+  root.querySelector("#pn-open-organize").addEventListener("click", () => openLearningPage("organize"));
+  root.querySelector("#pn-resume").addEventListener("click", () => {
+    root.querySelector("#pn-launcher").hidden = true;
+    root.querySelector("#pn-editor").hidden = false;
+    root.querySelector("#pn-save-footer").hidden = false;
+  });
+  root.querySelector("#pn-wide").addEventListener("click", () => {
+    panelPreferences.wide = !panelPreferences.wide;
+    applyPanelPreferences(); persistPanelPreferences();
+  });
+  root.querySelector("#pn-font-size").addEventListener("change", (event) => {
+    panelPreferences.fontSize = Number(event.target.value);
+    applyPanelPreferences(); persistPanelPreferences();
+  });
+  const trackEdit = (event) => { if (root.querySelector("#pn-editor").contains(event.target)) captureTouched = true; updateSaveState(); };
+  root.addEventListener("input", trackEdit);
+  root.addEventListener("change", trackEdit);
   root.querySelector("#pn-use-selection").addEventListener("click", () => {
     const selection = root.getSelection?.()?.toString().trim() || window.getSelection()?.toString().trim();
     if (!selection) return setPanelMessage("英文の中から語句を選択してください。", true);
@@ -174,11 +238,47 @@ function bindPanelEvents(root) {
   root.querySelector("#pn-cloud").addEventListener("click", useCloudTranslation);
   root.querySelector("#pn-save").addEventListener("click", saveCapture);
   document.addEventListener("keydown", (event) => { if (event.key === "Escape" && phraseNestHost && !phraseNestHost.hidden) phraseNestHost.hidden = true; });
+  window.addEventListener("resize", applyPanelPreferences);
+}
+
+function applyPanelPreferences() {
+  const root = phraseNestHost.shadowRoot;
+  const panel = root.querySelector(".pn-panel");
+  panel.classList.toggle("pn-wide", Boolean(panelPreferences.wide));
+  const fontSize = [14, 16, 18].includes(panelPreferences.fontSize) ? panelPreferences.fontSize : 16;
+  panel.style.setProperty("--reading-size", `${fontSize}px`);
+  root.querySelector("#pn-font-size").value = String(fontSize);
+  root.querySelector("#pn-wide").textContent = panelPreferences.wide ? "標準幅" : "ワイド";
+  root.querySelector("#pn-wide").setAttribute("aria-pressed", String(Boolean(panelPreferences.wide)));
+  const rect = panel.getBoundingClientRect();
+  panel.style.right = `${Math.max(8, Math.min(Number(panelPreferences.right) || 24, innerWidth - rect.width - 8))}px`;
+  panel.style.top = `${Math.max(8, Math.min(Number(panelPreferences.top) || 24, innerHeight - Math.min(rect.height, 180) - 8))}px`;
+  root.querySelectorAll("textarea").forEach(resizeLongTextarea);
+}
+
+function persistPanelPreferences() { chrome.storage.local.set({ phraseNestPanelPreferences: panelPreferences }); }
+
+function captureSnapshot() {
+  if (!phraseNestHost || !selectedPageText) return null;
+  const root = phraseNestHost.shadowRoot;
+  return JSON.stringify({ source: selectedPageText, translation: root.querySelector("#pn-translation").value, note: root.querySelector("#pn-note").value, terms: [...root.querySelectorAll(".pn-term")].filter((row) => row.querySelector(".pn-term-check").checked).map((row) => ({ term: row.dataset.normalized, meaning: row.querySelector(".pn-meaning").value, core: row.querySelector(".pn-core-image").value, note: row.querySelector(".pn-term-note").value })) });
+}
+
+function isCaptureDirty() { return Boolean(selectedPageText && captureSnapshot() !== savedCaptureSnapshot); }
+
+function updateSaveState() {
+  if (!phraseNestHost) return;
+  const root = phraseNestHost.shadowRoot;
+  const dirty = isCaptureDirty();
+  root.querySelector("#pn-save-state").textContent = captureBusy ? "処理中…" : savedCaptureSnapshot === null ? "未保存" : dirty ? "保存後の変更あり" : "保存済み";
+  root.querySelector("#pn-save-state").classList.toggle("pn-unsaved", dirty);
+  root.querySelector("#pn-save-hint").textContent = savedCaptureSnapshot !== null && dirty ? "自動保存ではありません。再保存すると別の英文記録になります。" : "訳・メモは保存ボタンで保存されます。";
+  root.querySelector("#pn-save").disabled = captureBusy || (savedCaptureSnapshot !== null && !dirty);
 }
 
 function resizeLongTextarea(textarea) {
   if (!textarea) return;
-  const maximumHeight = 260;
+  const maximumHeight = panelPreferences.wide ? 420 : 320;
   textarea.style.height = "auto";
   const nextHeight = Math.min(textarea.scrollHeight, maximumHeight);
   textarea.style.height = `${nextHeight}px`;
@@ -195,6 +295,7 @@ async function addTerm(rawTerm, automatic = false, suppliedMeaning = "", candida
   const root = phraseNestHost.shadowRoot;
   const term = rawTerm.trim().replace(/\s+/g, " ");
   if (!term) return;
+  if (!automatic) captureTouched = true;
   const normalized = term.toLowerCase();
   if ([...root.querySelectorAll(".pn-term")].some((row) => row.dataset.normalized === normalized)) return setPanelMessage("この語句はすでに追加されています。", true);
   root.querySelector("#pn-term-input").value = "";
@@ -232,12 +333,13 @@ async function addTerm(rawTerm, automatic = false, suppliedMeaning = "", candida
   text.append(titleLine, meaning, detailsToggle, details);
   const actions = document.createElement("div"); actions.className = "pn-term-actions";
   const ai = document.createElement("button"); ai.type = "button"; ai.className = "pn-ai"; ai.textContent = "AI解説"; ai.addEventListener("click", () => explainTerm(term, meaning));
-  const remove = document.createElement("button"); remove.type = "button"; remove.className = "pn-remove"; remove.textContent = "×"; remove.setAttribute("aria-label", `${term}を削除`); remove.addEventListener("click", () => row.remove());
+  const remove = document.createElement("button"); remove.type = "button"; remove.className = "pn-remove"; remove.textContent = "×"; remove.setAttribute("aria-label", `${term}を削除`); remove.addEventListener("click", () => { row.remove(); updateSaveState(); });
   actions.append(ai, remove); row.append(check, text, actions); root.querySelector("#pn-terms").append(row);
   if (!suppliedMeaning) {
     const localResult = await translateLocally(term);
     if (localResult.translation) meaning.value = localResult.translation;
   }
+  updateSaveState();
 }
 
 async function translateLocally(text, allowDownload = false, onProgress = () => {}) {
@@ -259,10 +361,11 @@ async function translateLocally(text, allowDownload = false, onProgress = () => 
 }
 
 async function requestCloudTranslation(texts) {
-  const response = await chrome.runtime.sendMessage({
+  let response;
+  try { response = await chrome.runtime.sendMessage({
     type: "TRANSLATE",
     payload: { texts, source: "en", target: "ja" },
-  });
+  }); } catch { return { ok: false, error: "翻訳先に接続できませんでした。" }; }
   if (!response?.ok) return { ok: false, error: response?.error || "Google翻訳に接続できませんでした。" };
   const translations = response.result.translations || [response.result.translation];
   return { ok: true, ...response.result, translations };
@@ -391,12 +494,17 @@ async function explainTerm(expression, meaningInput) {
   if (!response?.ok) return setPanelMessage(response?.error || "AI解説に失敗しました。", true);
   const explanation = response.result.explanation;
   meaningInput.value = meaningInput.value ? `${meaningInput.value} — ${explanation}` : explanation;
+  updateSaveState();
   setPanelMessage("AI解説を追加しました。保存前に内容を確認してください。");
 }
 
 async function saveCapture() {
+  if (captureBusy || !isCaptureDirty()) return;
   const root = phraseNestHost.shadowRoot;
   const saveButton = root.querySelector("#pn-save");
+  captureBusy = true;
+  const submittedSnapshot = captureSnapshot();
+  updateSaveState();
   saveButton.disabled = true; saveButton.textContent = "保存中…";
   const terms = [...root.querySelectorAll(".pn-term")]
     .filter((row) => row.querySelector(".pn-term-check").checked)
@@ -408,9 +516,14 @@ async function saveCapture() {
     }));
   const pathMatch = location.pathname.match(/\/r\/([^/]+)/i);
   const payload = { p_original_text: selectedPageText, p_machine_translation: root.querySelector("#pn-translation").value, p_translation: root.querySelector("#pn-translation").value, p_note: root.querySelector("#pn-note").value, p_source_url: location.href, p_source_title: document.title, p_subreddit: pathMatch ? `r/${pathMatch[1]}` : null, p_terms: terms };
-  const response = await chrome.runtime.sendMessage({ type: "SAVE_CAPTURE", payload });
+  let response;
+  try { response = await chrome.runtime.sendMessage({ type: "SAVE_CAPTURE", payload }); }
+  catch { response = { ok: false, error: "保存先に接続できませんでした。もう一度お試しください。" }; }
+  captureBusy = false;
   saveButton.disabled = false; saveButton.textContent = "英文と語句を保存";
-  if (!response?.ok) return setPanelMessage(response?.error || "保存に失敗しました。", true);
+  if (!response?.ok) { updateSaveState(); return setPanelMessage(response?.error || "保存に失敗しました。", true); }
+  savedCaptureSnapshot = submittedSnapshot;
+  updateSaveState();
   const existingCount = response.result.terms?.filter((term) => term.existing).length || 0;
   setPanelMessage(`保存しました。${existingCount ? `登録済みの語句 ${existingCount}件は登場回数を増やしました。` : ""}`);
 }
@@ -425,4 +538,9 @@ function enableDragging(panel, handle) {
   let startX = 0, startY = 0, startRight = 0, startTop = 0;
   handle.addEventListener("pointerdown", (event) => { if (event.target.closest("button")) return; const rect = panel.getBoundingClientRect(); startX = event.clientX; startY = event.clientY; startRight = innerWidth - rect.right; startTop = rect.top; handle.setPointerCapture(event.pointerId); });
   handle.addEventListener("pointermove", (event) => { if (!handle.hasPointerCapture(event.pointerId)) return; panel.style.right = `${Math.max(8, startRight - (event.clientX - startX))}px`; panel.style.top = `${Math.max(8, startTop + event.clientY - startY)}px`; });
+  handle.addEventListener("pointerup", () => {
+    panelPreferences.right = parseFloat(panel.style.right) || 24;
+    panelPreferences.top = parseFloat(panel.style.top) || 24;
+    applyPanelPreferences(); persistPanelPreferences();
+  });
 }

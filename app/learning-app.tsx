@@ -6,7 +6,7 @@ import { buildOrganizationExport, countPendingOrganizationItems, exportPresets, 
 
 type Tab = "today" | "words" | "sentences" | "notes" | "organize" | "settings";
 type LearningStatus = "unlearned" | "learning" | "mastered";
-type Word = { id: string; term: string; meaning: string; coreImage: string; note: string; status: LearningStatus; occurrences: number; dueLabel: string; example: string; translation: string; updatedAt: string; organizationCheckedAt: string | null };
+type Word = { id: string; term: string; meaning: string; coreImage: string; note: string; status: LearningStatus; occurrences: number; dueLabel: string; example: string; translation: string; createdAt: string; updatedAt: string; organizationCheckedAt: string | null };
 type Sentence = { id: string; source: string; translation: string; note: string; community: string; savedAt: string; terms: string[]; updatedAt: string; organizationCheckedAt: string | null };
 
 const statusLabels: Record<LearningStatus, string> = { unlearned: "未学習", learning: "学習中", mastered: "覚えた" };
@@ -24,6 +24,8 @@ export function LearningApp() {
   const [completed, setCompleted] = useState(0);
   const [filter, setFilter] = useState<LearningStatus | "all">("all");
   const [query, setQuery] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [largeText, setLargeText] = useState(false);
   const [sentenceItems, setSentenceItems] = useState<Sentence[]>([]);
   const [usage, setUsage] = useState({ cloudCharacters: 0, aiUsd: 0 });
   const [connection, setConnection] = useState<"setup" | "checking" | "signedout" | "live" | "error">("checking");
@@ -32,6 +34,9 @@ export function LearningApp() {
   const [editingSentence, setEditingSentence] = useState<Sentence | null>(null);
 
   useEffect(() => {
+    Promise.resolve().then(() => {
+      try { setLargeText(localStorage.getItem("phraseNestLargeText") === "true"); } catch { /* Display preference is optional. */ }
+    });
     async function initializeCloudData() {
       await Promise.resolve();
       if (!getSupabaseConfiguration()) { setConnection("setup"); return; }
@@ -44,7 +49,7 @@ export function LearningApp() {
         setWords(vocabulary.map((word) => {
           const exampleLink = links.find((link) => link.vocabulary_id === word.id);
           const exampleSentence = exampleLink ? sentenceById.get(exampleLink.sentence_id) : undefined;
-          return { id: word.id, term: word.term, meaning: word.meaning, coreImage: word.core_image || "", note: word.note, status: word.status, occurrences: word.occurrence_count, dueLabel: formatDueLabel(word.next_review_at), example: exampleSentence?.original_text || "", translation: exampleSentence?.translation || "", updatedAt: word.updated_at, organizationCheckedAt: word.organization_checked_at };
+          return { id: word.id, term: word.term, meaning: word.meaning, coreImage: word.core_image || "", note: word.note, status: word.status, occurrences: word.occurrence_count, dueLabel: formatDueLabel(word.next_review_at), example: exampleSentence?.original_text || "", translation: exampleSentence?.translation || "", createdAt: word.created_at, updatedAt: word.updated_at, organizationCheckedAt: word.organization_checked_at };
         }));
         setSentenceItems(savedSentences.map((sentence) => ({
           id: sentence.id,
@@ -97,6 +102,7 @@ export function LearningApp() {
 
   function selectTab(nextTab: Tab) {
     setTab(nextTab);
+    setSearchQuery("");
     const url = new URL(window.location.href);
     if (nextTab === "today") url.searchParams.delete("tab");
     else url.searchParams.set("tab", nextTab);
@@ -111,10 +117,13 @@ export function LearningApp() {
   const organizationCount = countPendingOrganizationItems(words, sentenceItems);
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${largeText ? "large-text" : ""}`}>
       <header className="topbar">
         <button className="brand" type="button" onClick={() => selectTab("today")} aria-label="ホームへ"><span className="brand-mark">P</span><span><strong>PhraseNest</strong><small>Reddit English Notes</small></span></button>
-        <div className={`sync-state ${connection}`}><span /> {connection === "live" ? "Supabaseと同期済み" : connection === "error" ? "接続エラー" : "デモデータ"}</div>
+        <div className="topbar-actions"><button className="text-size-button" type="button" aria-pressed={largeText} onClick={() => {
+          const next = !largeText; setLargeText(next);
+          try { localStorage.setItem("phraseNestLargeText", String(next)); } catch { /* Display preference is optional. */ }
+        }}>文字 {largeText ? "標準に戻す" : "大きめ"}</button><div className={`sync-state ${connection}`}><span /> {connection === "live" ? "同期済み" : connection === "error" ? "接続エラー" : "デモデータ"}</div></div>
       </header>
       <div className="workspace">
         <aside className="sidebar" aria-label="メインメニュー">
@@ -128,12 +137,15 @@ export function LearningApp() {
           <button className={`nav-button ${tab === "settings" ? "active" : ""}`} type="button" onClick={() => selectTab("settings")}><span className="nav-icon">⚙</span><span>設定</span></button>
         </aside>
         <section className="content">
-          {tab === "today" && <TodayView words={words} reviewWord={reviewWord} revealed={revealed} completed={completed} remaining={Math.max(0, reviewQueue.length - completed)} onReveal={() => setRevealed(true)} onAnswer={answerReview} />}
-          {tab === "words" && <WordsView words={filteredWords} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onEdit={setEditingWord} />}
-          {tab === "sentences" && <SentencesView sentences={sentenceItems} onEdit={setEditingSentence} />}
-          {tab === "notes" && <NotesView words={words} sentences={sentenceItems} onEditWord={setEditingWord} onEditSentence={setEditingSentence} />}
-          {tab === "organize" && <OrganizationView words={words} sentences={sentenceItems} />}
-          {tab === "settings" && <SettingsView connection={connection} error={connectionError} usage={usage} />}
+          <div className="library-search"><label htmlFor="library-search">保存内容をまとめて検索</label><div><input id="library-search" type="search" placeholder="語句・英文・コアイメージ・メモ" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />{searchQuery && <button type="button" onClick={() => setSearchQuery("")}>検索を閉じる</button>}</div></div>
+          {searchQuery.trim() ? <SearchView words={words} sentences={sentenceItems} query={searchQuery} onEditWord={setEditingWord} onEditSentence={setEditingSentence} /> : <>
+            {tab === "today" && <TodayView words={words} reviewWord={reviewWord} revealed={revealed} completed={completed} remaining={reviewQueue.length} onReveal={() => setRevealed(true)} onAnswer={answerReview} />}
+            {tab === "words" && <WordsView words={filteredWords} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onEdit={setEditingWord} />}
+            {tab === "sentences" && <SentencesView sentences={sentenceItems} onEdit={setEditingSentence} />}
+            {tab === "notes" && <NotesView words={words} sentences={sentenceItems} onEditWord={setEditingWord} onEditSentence={setEditingSentence} />}
+            {tab === "organize" && <OrganizationView words={words} sentences={sentenceItems} />}
+            {tab === "settings" && <SettingsView connection={connection} error={connectionError} usage={usage} />}
+          </>}
         </section>
       </div>
       <nav className="mobile-nav" aria-label="モバイルメニュー">
@@ -157,7 +169,23 @@ function TodayView({ words, reviewWord, revealed, completed, remaining, onReveal
 }
 
 function WordsView({ words, filter, query, onFilter, onQuery, onEdit }: { words: Word[]; filter: LearningStatus | "all"; query: string; onFilter: (value: LearningStatus | "all") => void; onQuery: (value: string) => void; onEdit: (word: Word) => void }) {
-  return <><PageHeading eyebrow="VOCABULARY" title="単語・熟語" description="Redditで出会った回数と一緒に確認できます。" /><div className="toolbar"><input aria-label="語句を検索" placeholder="語句・意味・メモを検索" value={query} onChange={(event) => onQuery(event.target.value)} /><div className="filter-group">{(["all", "unlearned", "learning", "mastered"] as const).map((value) => <button type="button" key={value} className={filter === value ? "selected" : ""} onClick={() => onFilter(value)}>{value === "all" ? "すべて" : statusLabels[value]}</button>)}</div></div>{words.length ? <div className="word-list">{words.map((word) => <article className="word-row" key={word.id}><div><div className="word-title"><h2>{word.term}</h2><span className={`status ${word.status}`}>{statusLabels[word.status]}</span></div><p>{word.meaning || "意味はまだありません"}</p>{word.coreImage && <div className="word-core-image"><span>コアイメージ</span>{word.coreImage}</div>}<small>{word.note || "自分用メモはまだありません"}</small></div><div className="word-actions"><button className="edit-button" type="button" onClick={() => onEdit(word)}>編集</button><div className="word-stats"><strong>{word.occurrences}</strong><span>登場回数</span><em>{word.dueLabel}</em></div></div></article>)}</div> : <div className="list-empty"><h2>語句が見つかりません</h2><p>検索条件を変えるか、Redditから新しい語句を保存してください。</p></div>}</>;
+  const [quickFilter, setQuickFilter] = useState<"all" | "notes" | "frequent">("all");
+  const [sort, setSort] = useState<"review" | "recent" | "frequent">("review");
+  const visibleWords = words.filter((word) => quickFilter === "all" || (quickFilter === "notes" ? Boolean(word.note.trim() || word.coreImage.trim()) : word.occurrences >= 3));
+  if (sort === "recent") visibleWords.sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  if (sort === "frequent") visibleWords.sort((a, b) => b.occurrences - a.occurrences);
+  return <><PageHeading eyebrow="VOCABULARY" title="単語・熟語" description="Redditで出会った回数と一緒に確認できます。" /><div className="toolbar"><input aria-label="語句を検索" placeholder="語句・意味・メモを検索" value={query} onChange={(event) => onQuery(event.target.value)} /><div className="filter-group">{(["all", "unlearned", "learning", "mastered"] as const).map((value) => <button type="button" key={value} className={filter === value ? "selected" : ""} onClick={() => onFilter(value)}>{value === "all" ? "すべて" : statusLabels[value]}</button>)}</div></div><div className="library-controls"><div className="filter-group">{(["all", "notes", "frequent"] as const).map((value) => <button key={value} type="button" className={quickFilter === value ? "selected" : ""} onClick={() => setQuickFilter(value)}>{value === "all" ? "すべての語句" : value === "notes" ? "メモあり" : "よく出会う（3回以上）"}</button>)}</div><label>並び順 <select value={sort} onChange={(event) => setSort(event.target.value as typeof sort)}><option value="review">復習の順番</option><option value="recent">保存した順（新しい順）</option><option value="frequent">登場回数が多い順</option></select></label></div>{visibleWords.length ? <div className="word-list">{visibleWords.map((word) => <article className="word-row" key={word.id}><div><div className="word-title"><h2>{word.term}</h2><span className={`status ${word.status}`}>{statusLabels[word.status]}</span></div><p>{word.meaning || "意味はまだありません"}</p>{word.coreImage && <div className="word-core-image"><span>コアイメージ</span>{word.coreImage}</div>}<small>{word.note || "自分用メモはまだありません"}</small></div><div className="word-actions"><button className="edit-button" type="button" onClick={() => onEdit(word)}>編集</button><div className="word-stats"><strong>{word.occurrences}</strong><span>登場回数</span><em>{word.dueLabel}</em></div></div></article>)}</div> : <div className="list-empty"><h2>語句が見つかりません</h2><p>検索条件を変えるか、Redditから新しい語句を保存してください。</p></div>}</>;
+}
+
+function SearchView({ words, sentences, query, onEditWord, onEditSentence }: { words: Word[]; sentences: Sentence[]; query: string; onEditWord: (word: Word) => void; onEditSentence: (sentence: Sentence) => void }) {
+  const needle = query.trim().toLowerCase();
+  const matchingWords = words.filter((word) => `${word.term} ${word.meaning} ${word.coreImage} ${word.note}`.toLowerCase().includes(needle));
+  const matchingSentences = sentences.filter((sentence) => `${sentence.source} ${sentence.translation} ${sentence.note} ${sentence.terms.join(" ")}`.toLowerCase().includes(needle));
+  return <><PageHeading eyebrow="SEARCH" title="検索結果" description={`「${query.trim()}」：語句 ${matchingWords.length}件・英文 ${matchingSentences.length}件`} />
+    {!!matchingWords.length && <section className="search-section"><h2>単語・熟語・語句メモ</h2><div className="note-list">{matchingWords.map((word) => <article className="note-card" key={word.id}><div className="note-card-heading"><h3>{word.term}</h3><button className="edit-button" type="button" onClick={() => onEditWord(word)}>編集</button></div><p className="note-body">{word.meaning}</p>{word.coreImage && <div className="word-core-image"><span>コアイメージ</span>{word.coreImage}</div>}{word.note && <p className="note-body">{word.note}</p>}</article>)}</div></section>}
+    {!!matchingSentences.length && <section className="search-section"><h2>英文・英文メモ</h2><div className="sentence-list">{matchingSentences.map((sentence) => <article className="sentence-card" key={sentence.id}><div className="sentence-meta"><span>{sentence.community}</span><button className="edit-button" type="button" onClick={() => onEditSentence(sentence)}>編集</button></div><h3>{sentence.source}</h3><p className="translation">{sentence.translation}</p>{sentence.note && <p className="personal-note">{sentence.note}</p>}</article>)}</div></section>}
+    {!matchingWords.length && !matchingSentences.length && <div className="list-empty"><h2>保存内容が見つかりません</h2><p>短い語句や日本語の意味でも検索できます。</p></div>}
+  </>;
 }
 
 function SentencesView({ sentences, onEdit }: { sentences: Sentence[]; onEdit: (sentence: Sentence) => void }) {
@@ -269,25 +297,31 @@ function WordEditor({ word, onClose, onSave }: { word: Word; onClose: () => void
   const [coreImage, setCoreImage] = useState(word.coreImage);
   const [note, setNote] = useState(word.note);
   const [status, setStatus] = useState(word.status);
-  return <EditDialog title={`${word.term} を編集`} onClose={onClose} onSubmit={() => onSave({ meaning: meaning.trim(), core_image: coreImage.trim(), note: note.trim(), status })}><label>意味<input value={meaning} onChange={(event) => setMeaning(event.target.value)} placeholder="短い日本語の意味" /></label><label>コアイメージ<textarea value={coreImage} onChange={(event) => setCoreImage(event.target.value)} placeholder="表現の中心となる感覚やイメージ" rows={5} /></label><label>自由メモ<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="使い分け、文法、自分なりの覚え方など" rows={4} /></label><label>学習状態<select value={status} onChange={(event) => setStatus(event.target.value as LearningStatus)}><option value="unlearned">未学習</option><option value="learning">学習中</option><option value="mastered">覚えた</option></select></label></EditDialog>;
+  return <EditDialog title={`${word.term} を編集`} dirty={meaning !== word.meaning || coreImage !== word.coreImage || note !== word.note || status !== word.status} onClose={onClose} onSubmit={() => onSave({ meaning: meaning.trim(), core_image: coreImage.trim(), note: note.trim(), status })}><label>意味<input value={meaning} onChange={(event) => setMeaning(event.target.value)} placeholder="短い日本語の意味" /></label><label>コアイメージ<textarea value={coreImage} onChange={(event) => setCoreImage(event.target.value)} placeholder="表現の中心となる感覚やイメージ" rows={5} /></label><label>自由メモ<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="使い分け、文法、自分なりの覚え方など" rows={4} /></label><label>学習状態<select value={status} onChange={(event) => setStatus(event.target.value as LearningStatus)}><option value="unlearned">未学習</option><option value="learning">学習中</option><option value="mastered">覚えた</option></select></label></EditDialog>;
 }
 
 function SentenceEditor({ sentence, onClose, onSave }: { sentence: Sentence; onClose: () => void; onSave: (changes: { translation: string; note: string }) => Promise<void> }) {
   const [translation, setTranslation] = useState(sentence.translation);
   const [note, setNote] = useState(sentence.note);
-  return <EditDialog title="英文の訳とメモを編集" onClose={onClose} onSubmit={() => onSave({ translation: translation.trim(), note: note.trim() })}><div className="source-preview"><span>元の英文</span><p>{sentence.source}</p></div><label>自分で直した訳<textarea value={translation} onChange={(event) => setTranslation(event.target.value)} placeholder="英文全体の訳" rows={4} /></label><label>自分用メモ<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="気づいた点や補足説明など" rows={4} /></label></EditDialog>;
+  return <EditDialog title="英文の訳とメモを編集" dirty={translation !== sentence.translation || note !== sentence.note} onClose={onClose} onSubmit={() => onSave({ translation: translation.trim(), note: note.trim() })}><div className="source-preview"><span>元の英文</span><p>{sentence.source}</p></div><label>自分で直した訳<textarea value={translation} onChange={(event) => setTranslation(event.target.value)} placeholder="英文全体の訳" rows={4} /></label><label>自分用メモ<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="気づいた点や補足説明など" rows={4} /></label></EditDialog>;
 }
 
-function EditDialog({ title, children, onClose, onSubmit }: { title: string; children: React.ReactNode; onClose: () => void; onSubmit: () => Promise<void> }) {
+function EditDialog({ title, children, dirty, onClose, onSubmit }: { title: string; children: React.ReactNode; dirty: boolean; onClose: () => void; onSubmit: () => Promise<void> }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  useEffect(() => {
+    function warnBeforeLeaving(event: BeforeUnloadEvent) { if (dirty) { event.preventDefault(); event.returnValue = ""; } }
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  }, [dirty]);
+  function close() { if (!saving && (!dirty || window.confirm("変更はまだ保存されていません。編集を閉じますか？"))) onClose(); }
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setSaving(true); setError("");
     try { await onSubmit(); }
     catch (saveError) { setError(saveError instanceof Error ? saveError.message : "変更を保存できませんでした"); setSaving(false); }
   }
-  return <div className="dialog-backdrop" role="presentation"><form className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-dialog-title" onSubmit={submit}><div className="dialog-heading"><h2 id="edit-dialog-title">{title}</h2><button type="button" aria-label="閉じる" onClick={onClose}>×</button></div><div className="dialog-fields">{children}</div>{error && <p className="connection-error">{error}</p>}<div className="dialog-actions"><button className="plain-action" type="button" onClick={onClose} disabled={saving}>キャンセル</button><button className="primary-button" type="submit" disabled={saving}>{saving ? "保存中…" : "変更を保存"}</button></div></form></div>;
+  return <div className="dialog-backdrop" role="presentation"><form className="edit-dialog" role="dialog" aria-modal="true" aria-labelledby="edit-dialog-title" onSubmit={submit}><div className="dialog-heading"><h2 id="edit-dialog-title">{title}</h2><button type="button" aria-label="閉じる" onClick={close} disabled={saving}>×</button></div><p className={`edit-save-state ${dirty ? "unsaved" : ""}`} role="status">{saving ? "保存中…" : dirty ? "未保存の変更があります" : "保存内容から変更なし"}</p><fieldset className="dialog-fields" disabled={saving}>{children}</fieldset>{error && <p className="connection-error">{error}</p>}<div className="dialog-actions"><button className="plain-action" type="button" onClick={close} disabled={saving}>キャンセル</button><button className="primary-button" type="submit" disabled={saving || !dirty}>{saving ? "保存中…" : "変更を保存"}</button></div></form></div>;
 }
 
 function SettingsView({ connection, error, usage }: { connection: string; error: string; usage: { cloudCharacters: number; aiUsd: number } }) {

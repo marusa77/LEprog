@@ -42,3 +42,8 @@ next-env.d.ts
 /outputs/
 /work/
 /.codex/
+
+# Private learning exports and local publishing artifacts
+/pn-*.json
+/.openai/*.tar.gz
+/.sites-runtime/

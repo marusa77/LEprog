@@ -42,6 +42,13 @@ test("ships the extension and cloud schema", async () => {
   assert.match(manifest, /Ctrl\+Shift\+Y/);
   assert.match(manifest, /common-expressions\.js/);
   assert.match(manifest, /conversation-patterns\.js/);
+  assert.equal(JSON.parse(manifest).action.default_popup, "launcher.html");
+  assert.match(contentScript, /function openLauncher/);
+  assert.match(contentScript, /保存後の変更あり/);
+  assert.match(contentScript, /phraseNestPanelPreferences/);
+  assert.match(learningApp, /保存内容をまとめて検索/);
+  assert.match(learningApp, /function SearchView/);
+  assert.match(learningApp, /よく出会う（3回以上）/);
   assert.match(contentScript, /保存内容/);
   assert.match(contentScript, /学習メモ/);
   assert.match(contentScript, /core_image/);
@@ -82,4 +89,48 @@ test("ships the extension and cloud schema", async () => {
   const formatCandidates = vm.runInContext(`extractCandidateDetails("How's the weather there? I'd like some coffee.")`, extensionContext);
   assert.ok(formatCandidates.some((candidate) => candidate.term === "How's ... there?" && candidate.meaning.includes("そちら")));
   assert.ok(formatCandidates.some((candidate) => candidate.term === "I'd like ..." && candidate.meaning.includes("欲しい")));
+});
+
+test("extension opens without a selection and reports the saved draft correctly", async () => {
+  const script = await readFile(new URL("../extension/content-script.js", import.meta.url), "utf8");
+  const elements = new Map();
+  const root = { querySelector: (selector) => elements.get(selector), querySelectorAll: () => [] };
+  for (const selector of ["#pn-launcher", "#pn-editor", "#pn-save-footer", "#pn-resume", "#pn-save-state", "#pn-save-hint", "#pn-save", "#pn-translation", "#pn-note"]) {
+    elements.set(selector, { hidden: false, value: "", textContent: "", disabled: false, classList: { toggle() {} } });
+  }
+  const context = { window: { getSelection: () => ({ toString: () => "" }) }, chrome: { runtime: { onMessage: { addListener() {} } } }, host: { shadowRoot: root, hidden: true } };
+  vm.createContext(context);
+  vm.runInContext(script, context);
+  vm.runInContext("phraseNestHost = host", context);
+  await vm.runInContext("openTranslator()", context);
+  assert.equal(context.host.hidden, false);
+  assert.equal(elements.get("#pn-launcher").hidden, false);
+  assert.equal(elements.get("#pn-editor").hidden, true);
+  assert.equal(elements.get("#pn-resume").hidden, true);
+  vm.runInContext('selectedPageText = "Keep going."; updateSaveState()', context);
+  assert.equal(elements.get("#pn-save-state").textContent, "未保存");
+  vm.runInContext("savedCaptureSnapshot = captureSnapshot(); updateSaveState()", context);
+  assert.equal(elements.get("#pn-save-state").textContent, "保存済み");
+  assert.equal(elements.get("#pn-save").disabled, true);
+  elements.get("#pn-note").value = "コアイメージのメモ";
+  vm.runInContext("updateSaveState()", context);
+  assert.equal(elements.get("#pn-save-state").textContent, "保存後の変更あり");
+  assert.equal(elements.get("#pn-save").disabled, false);
+  vm.runInContext("openLauncher()", context);
+  assert.equal(elements.get("#pn-resume").hidden, false);
+  assert.equal(elements.get("#pn-note").value, "コアイメージのメモ");
+});
+
+test("keyboard shortcut on other pages opens the extension menu", async () => {
+  const script = await readFile(new URL("../extension/service-worker.js", import.meta.url), "utf8");
+  let popupCount = 0;
+  let translatorCount = 0;
+  const context = { chrome: { action: { openPopup: async () => { popupCount++; } }, tabs: { sendMessage: async () => { translatorCount++; } }, commands: { onCommand: { addListener() {} } }, runtime: { onInstalled: { addListener() {} }, onMessage: { addListener() {} } } } };
+  vm.createContext(context);
+  vm.runInContext(script, context);
+  await vm.runInContext('openPanel({ id: 1, url: "https://example.com/" })', context);
+  await vm.runInContext('openPanel({ id: 1, url: "https://not-reddit.com/" })', context);
+  assert.equal(popupCount, 2);
+  await vm.runInContext('openPanel({ id: 1, url: "https://www.reddit.com/r/English/" })', context);
+  assert.equal(translatorCount, 1);
 });

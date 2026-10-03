@@ -1,7 +1,10 @@
 async function openPanel(tab) {
-  if (!tab?.id || !tab.url?.includes("reddit.com")) return;
+  if (!tab?.id || !/^https:\/\/([\w-]+\.)*reddit\.com\//.test(tab.url || "")) {
+    await chrome.action.openPopup();
+    return;
+  }
   try { await chrome.tabs.sendMessage(tab.id, { type: "OPEN_TRANSLATOR" }); }
-  catch { /* The Reddit tab may still be loading. */ }
+  catch { await chrome.action.openPopup(); }
 }
 
 let customPatternCache = { expiresAt: 0, rows: [] };
@@ -12,8 +15,6 @@ chrome.commands.onCommand.addListener(async (command) => {
   await openPanel(tab);
 });
 
-chrome.action.onClicked.addListener(openPanel);
-
 chrome.runtime.onInstalled.addListener(async ({ reason }) => {
   if (reason !== "install") return;
   const { supabaseUrl } = await chrome.storage.local.get("supabaseUrl");
@@ -21,7 +22,14 @@ chrome.runtime.onInstalled.addListener(async ({ reason }) => {
 });
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message.type === "SAVE_CAPTURE") handleSave(message.payload).then(sendResponse);
+  if (message.type === "OPEN_PANEL") {
+    chrome.tabs.query({ active: true, currentWindow: true }).then(async ([tab]) => {
+      if (!tab?.id || !/^https:\/\/([\w-]+\.)*reddit\.com\//.test(tab.url || "")) return { ok: false, error: "英文の取り込みはRedditのページで使えます。" };
+      await chrome.tabs.sendMessage(tab.id, { type: "OPEN_TRANSLATOR" });
+      return { ok: true };
+    }).catch(() => ({ ok: false, error: "Redditのページを再読み込みしてからお試しください。" })).then(sendResponse);
+  }
+  else if (message.type === "SAVE_CAPTURE") handleSave(message.payload).then(sendResponse);
   else if (message.type === "TRANSLATE") callFunction("translate", message.payload).then(sendResponse);
   else if (message.type === "EXPLAIN") callFunction("explain", message.payload).then(sendResponse);
   else if (message.type === "GET_CUSTOM_PATTERNS") getCustomPatterns().then(sendResponse);
