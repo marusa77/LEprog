@@ -1,6 +1,8 @@
+import { buildManualCapture, type CaptureResult, type ManualEntry } from "./manual-entry-data";
+
 export type BrowserSession = { access_token: string; refresh_token: string; expires_at: number; user?: { email?: string } };
 export type VocabularyRow = { id: string; term: string; meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered"; occurrence_count: number; next_review_at: string; created_at: string; updated_at: string; organization_checked_at: string | null };
-export type SentenceRow = { id: string; original_text: string; translation: string; note: string; subreddit: string | null; created_at: string; updated_at: string; organization_checked_at: string | null };
+export type SentenceRow = { id: string; original_text: string; translation: string; note: string; subreddit: string | null; source_title: string | null; source_url: string | null; created_at: string; updated_at: string; organization_checked_at: string | null };
 export type SentenceVocabularyRow = { sentence_id: string; vocabulary_id: string; selected_text: string };
 export type MonthlyUsageRow = { cloud_translation_characters: number; ai_estimated_usd: number | string };
 export type SupabaseConfiguration = { projectUrl: string; publishableKey: string };
@@ -119,6 +121,21 @@ export async function loadLearningData() {
 
 export async function submitReview(id: string, result: "forgot" | "uncertain" | "remembered") {
   return rest<{ status: "unlearned" | "learning" | "mastered"; next_review_at: string; interval_days: number }>("/rest/v1/rpc/record_review", { method: "POST", body: JSON.stringify({ p_vocabulary_id: id, p_result: result }) });
+}
+
+export async function saveManualEntry(entry: ManualEntry) {
+  const payload = buildManualCapture(entry);
+  return rest<CaptureResult>("/rest/v1/rpc/save_capture", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function translateManualText(text: string, source: "en" | "ja", target: "en" | "ja") {
+  if (source === target) throw new Error("英語と日本語のどちらに翻訳するか選んでください。");
+  const trimmed = text.trim();
+  if (!trimmed) throw new Error(source === "en" ? "翻訳する英文を入力してください。" : "英語にしたい日本語を入力してください。");
+  if (trimmed.length > 5000) throw new Error("翻訳は一度に5,000文字までです。短く分けてください。");
+  const result = await rest<{ translation: string; translations?: string[]; monthlyCharacters: number; monthlyLimit: number }>("/functions/v1/translate", { method: "POST", body: JSON.stringify({ texts: [trimmed], source, target }) });
+  if (typeof result.translation !== "string" || !result.translation.trim()) throw new Error("翻訳結果を取得できませんでした。入力内容は残しています。");
+  return result;
 }
 
 export async function updateVocabularyItem(id: string, changes: { meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered" }) {

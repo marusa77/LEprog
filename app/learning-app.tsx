@@ -3,18 +3,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { applyOrganizationResult, captureSessionFromUrl, consumeReturnTab, getStoredSession, getSupabaseConfiguration, loadLearningData, saveSupabaseConfiguration, signInWithGoogle, signOut, submitReview, updateSentence, updateVocabularyItem } from "./supabase-browser";
 import { buildOrganizationExport, countPendingOrganizationItems, exportPresets, OrganizationResult, OrganizationSuggestion, parseOrganizationResult } from "./organization";
+import { ManualEntryView } from "./manual-entry";
+import { sentenceSourceLabel } from "./manual-entry-data";
 
-type Tab = "today" | "words" | "sentences" | "notes" | "organize" | "settings";
+type Tab = "today" | "words" | "sentences" | "notes" | "organize" | "settings" | "capture";
 type LearningStatus = "unlearned" | "learning" | "mastered";
 type Word = { id: string; term: string; meaning: string; coreImage: string; note: string; status: LearningStatus; occurrences: number; dueLabel: string; example: string; translation: string; createdAt: string; updatedAt: string; organizationCheckedAt: string | null };
-type Sentence = { id: string; source: string; translation: string; note: string; community: string; savedAt: string; terms: string[]; updatedAt: string; organizationCheckedAt: string | null };
+type Sentence = { id: string; source: string; translation: string; note: string; community: string; sourceUrl: string | null; savedAt: string; terms: string[]; updatedAt: string; organizationCheckedAt: string | null };
 
 const statusLabels: Record<LearningStatus, string> = { unlearned: "未学習", learning: "学習中", mastered: "覚えた" };
 
 function getInitialTab(): Tab {
   if (typeof window === "undefined") return "today";
   const requestedTab = new URLSearchParams(window.location.search).get("tab") || consumeReturnTab();
-  return requestedTab === "words" || requestedTab === "sentences" || requestedTab === "notes" || requestedTab === "organize" || requestedTab === "settings" ? requestedTab : "today";
+  return requestedTab === "words" || requestedTab === "sentences" || requestedTab === "notes" || requestedTab === "organize" || requestedTab === "settings" || requestedTab === "capture" ? requestedTab : "today";
 }
 
 export function LearningApp() {
@@ -32,6 +34,7 @@ export function LearningApp() {
   const [connectionError, setConnectionError] = useState("");
   const [editingWord, setEditingWord] = useState<Word | null>(null);
   const [editingSentence, setEditingSentence] = useState<Sentence | null>(null);
+  const [reloadVersion, setReloadVersion] = useState(0);
 
   useEffect(() => {
     Promise.resolve().then(() => {
@@ -56,7 +59,8 @@ export function LearningApp() {
           source: sentence.original_text,
           translation: sentence.translation,
           note: sentence.note,
-          community: sentence.subreddit || "Reddit",
+          community: sentenceSourceLabel(sentence),
+          sourceUrl: sentence.source_url,
           savedAt: new Intl.DateTimeFormat("ja-JP", { month: "short", day: "numeric" }).format(new Date(sentence.created_at)),
           terms: links.filter((link) => link.sentence_id === sentence.id).map((link) => vocabularyById.get(link.vocabulary_id)?.term || link.selected_text),
           updatedAt: sentence.updated_at,
@@ -67,7 +71,7 @@ export function LearningApp() {
       } catch (error) { setConnectionError(error instanceof Error ? error.message : "接続できませんでした"); setConnection("error"); }
     }
     void initializeCloudData();
-  }, []);
+  }, [reloadVersion]);
   const reviewQueue = useMemo(() => words.filter((word) => word.dueLabel === "今日" || word.status === "unlearned"), [words]);
   const reviewWord = reviewQueue[0];
   const filteredWords = words.filter((word) => {
@@ -128,6 +132,7 @@ export function LearningApp() {
       <div className="workspace">
         <aside className="sidebar" aria-label="メインメニュー">
           <nav>
+            <NavButton active={tab === "capture"} label="入力して保存" icon="＋" onClick={() => selectTab("capture")} />
             <NavButton active={tab === "today"} label="今日の復習" count={reviewQueue.length} icon="◎" onClick={() => selectTab("today")} />
             <NavButton active={tab === "words"} label="単語・熟語" count={words.length} icon="A" onClick={() => selectTab("words")} />
             <NavButton active={tab === "sentences"} label="保存した英文" count={sentenceItems.length} icon="¶" onClick={() => selectTab("sentences")} />
@@ -137,7 +142,8 @@ export function LearningApp() {
           <button className={`nav-button ${tab === "settings" ? "active" : ""}`} type="button" onClick={() => selectTab("settings")}><span className="nav-icon">⚙</span><span>設定</span></button>
         </aside>
         <section className="content">
-          <div className="library-search"><label htmlFor="library-search">保存内容をまとめて検索</label><div><input id="library-search" type="search" placeholder="語句・英文・コアイメージ・メモ" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />{searchQuery && <button type="button" onClick={() => setSearchQuery("")}>検索を閉じる</button>}</div></div>
+          <div className="manual-entry-panel" hidden={tab !== "capture"}><ManualEntryView onSaved={() => setReloadVersion((version) => version + 1)} onOpenLibrary={() => selectTab("sentences")} onTranslation={(monthlyCharacters) => setUsage((current) => ({ ...current, cloudCharacters: monthlyCharacters }))} /></div>
+          {tab !== "capture" && <><div className="library-search"><label htmlFor="library-search">保存内容をまとめて検索</label><div><input id="library-search" type="search" placeholder="語句・英文・コアイメージ・メモ" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />{searchQuery && <button type="button" onClick={() => setSearchQuery("")}>検索を閉じる</button>}</div></div>
           {searchQuery.trim() ? <SearchView words={words} sentences={sentenceItems} query={searchQuery} onEditWord={setEditingWord} onEditSentence={setEditingSentence} /> : <>
             {tab === "today" && <TodayView words={words} reviewWord={reviewWord} revealed={revealed} completed={completed} remaining={reviewQueue.length} onReveal={() => setRevealed(true)} onAnswer={answerReview} />}
             {tab === "words" && <WordsView words={filteredWords} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onEdit={setEditingWord} />}
@@ -145,10 +151,11 @@ export function LearningApp() {
             {tab === "notes" && <NotesView words={words} sentences={sentenceItems} onEditWord={setEditingWord} onEditSentence={setEditingSentence} />}
             {tab === "organize" && <OrganizationView words={words} sentences={sentenceItems} />}
             {tab === "settings" && <SettingsView connection={connection} error={connectionError} usage={usage} />}
-          </>}
+          </>}</>}
         </section>
       </div>
       <nav className="mobile-nav" aria-label="モバイルメニュー">
+        <NavButton active={tab === "capture"} label="入力" icon="＋" onClick={() => selectTab("capture")} />
         <NavButton active={tab === "today"} label="復習" icon="◎" onClick={() => selectTab("today")} />
         <NavButton active={tab === "words"} label="語句" icon="A" onClick={() => selectTab("words")} />
         <NavButton active={tab === "sentences"} label="英文" icon="¶" onClick={() => selectTab("sentences")} />
@@ -189,7 +196,16 @@ function SearchView({ words, sentences, query, onEditWord, onEditSentence }: { w
 }
 
 function SentencesView({ sentences, onEdit }: { sentences: Sentence[]; onEdit: (sentence: Sentence) => void }) {
-  return <><PageHeading eyebrow="SAVED SENTENCES" title="保存した英文" description="元の文脈と、自分の説明を一緒に残します。" />{sentences.length ? <div className="sentence-list">{sentences.map((sentence) => <article className="sentence-card" key={sentence.id}><div className="sentence-meta"><span>{sentence.community}</span><div><time>{sentence.savedAt}</time><button className="edit-button" type="button" onClick={() => onEdit(sentence)}>編集</button></div></div><h2>{sentence.source}</h2><p className="translation">{sentence.translation || "訳はまだありません"}</p>{sentence.note && <p className="personal-note">メモ：{sentence.note}</p>}<div className="term-tags">{sentence.terms.map((term) => <span key={term}>{term}</span>)}</div></article>)}</div> : <div className="list-empty"><h2>保存した英文はまだありません</h2><p>Redditで英文を選択し、Chrome拡張機能から保存してください。</p></div>}</>;
+  return <>
+    <PageHeading eyebrow="SAVED SENTENCES" title="保存した英文" description="元の文脈と、自分の説明を一緒に残します。" />
+    {sentences.length ? <div className="sentence-list">{sentences.map((sentence) => <article className="sentence-card" key={sentence.id}>
+      <div className="sentence-meta"><span>{sentence.community}</span><div><time>{sentence.savedAt}</time><button className="edit-button" type="button" onClick={() => onEdit(sentence)}>編集</button></div></div>
+      <h2>{sentence.source}</h2><p className="translation">{sentence.translation || "訳はまだありません"}</p>
+      {sentence.note && <p className="personal-note">メモ：{sentence.note}</p>}
+      <div className="term-tags">{sentence.terms.map((term) => <span key={term}>{term}</span>)}</div>
+      {sentence.sourceUrl && /^https?:\/\//i.test(sentence.sourceUrl) && <p className="sentence-origin-link"><a href={sentence.sourceUrl} target="_blank" rel="noopener noreferrer">元のページを開く</a></p>}
+    </article>)}</div> : <div className="list-empty"><h2>保存した英文はまだありません</h2><p>「入力して保存」またはRedditのChrome拡張機能から登録できます。</p></div>}
+  </>;
 }
 
 type NoteFilter = "all" | "core" | "word" | "sentence";

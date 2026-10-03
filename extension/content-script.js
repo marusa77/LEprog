@@ -1,7 +1,7 @@
 let phraseNestHost;
 let selectedPageText = "";
 let localTranslator;
-let panelPreferences = { wide: false, fontSize: 16, right: 24, top: 24 };
+let panelPreferences = { wide: false, fontSize: 16, right: 24, top: 24, width: null, height: null };
 let savedCaptureSnapshot = null;
 let captureBusy = false;
 let translationGeneration = 0;
@@ -73,6 +73,7 @@ async function openTranslator() {
   selectedPageText = selection;
   if (!phraseNestHost) createPanel();
   phraseNestHost.hidden = false;
+  applyPanelPreferences();
   const root = phraseNestHost.shadowRoot;
   root.querySelector("#pn-launcher").hidden = true;
   root.querySelector("#pn-editor").hidden = false;
@@ -140,6 +141,7 @@ function openLauncher() {
   root.querySelector("#pn-editor").hidden = true;
   root.querySelector("#pn-save-footer").hidden = true;
   root.querySelector("#pn-resume").hidden = !selectedPageText;
+  applyPanelPreferences();
 }
 
 async function refreshCustomExpressions() {
@@ -164,7 +166,7 @@ function createPanel() {
   panel.innerHTML = `
     <div class="pn-top">
       <header class="pn-header" id="pn-drag"><div class="pn-brand"><span>P</span><div><strong>PhraseNest</strong><small id="pn-provider">英語学習ノート</small></div></div><div class="pn-header-actions"><button id="pn-wide" class="pn-secondary" type="button" aria-pressed="false">ワイド</button><button id="pn-close" class="pn-icon" type="button" aria-label="閉じる">×</button></div></header>
-      <nav class="pn-app-links" aria-label="保存内容と復習"><button id="pn-open-review" class="pn-secondary" type="button">今日の復習</button><button id="pn-open-words" class="pn-secondary" type="button">単語・熟語</button><button id="pn-open-library" class="pn-secondary" type="button">保存内容</button><button id="pn-open-notes" class="pn-secondary" type="button">学習メモ</button><button id="pn-open-organize" class="pn-secondary" type="button">整理</button></nav>
+      <nav class="pn-app-links" aria-label="保存内容と復習"><button id="pn-open-capture" class="pn-secondary" type="button">入力して保存</button><button id="pn-open-review" class="pn-secondary" type="button">今日の復習</button><button id="pn-open-words" class="pn-secondary" type="button">単語・熟語</button><button id="pn-open-library" class="pn-secondary" type="button">保存内容</button><button id="pn-open-notes" class="pn-secondary" type="button">学習メモ</button><button id="pn-open-organize" class="pn-secondary" type="button">整理</button></nav>
     </div>
     <div id="pn-launcher" class="pn-body pn-launcher" hidden><h2>今日は何を確認しますか？</h2><p>上のメニューから、保存内容や復習をすぐに開けます。</p><p>翻訳するときはRedditの英文を選択して、Ctrl + Shift + Y を押してください。</p><button id="pn-resume" class="pn-secondary pn-full" type="button" hidden>入力中の英文に戻る</button></div>
     <div class="pn-body" id="pn-editor">
@@ -186,12 +188,14 @@ function createPanel() {
       <div id="pn-terms" class="pn-terms"></div>
       <p id="pn-message" class="pn-message" role="status"></p>
     </div>
-    <div class="pn-preferences"><button id="pn-settings" class="pn-plain" type="button">設定</button><label>文字サイズ <select id="pn-font-size"><option value="14">標準</option><option value="16" selected>大きめ</option><option value="18">さらに大きめ</option></select></label></div>
-    <footer id="pn-save-footer"><div><span id="pn-save-state" role="status">未保存</span><small id="pn-save-hint">訳・メモは保存ボタンで保存されます。</small></div><button id="pn-save" class="pn-primary" type="button">英文と語句を保存</button></footer>`;
+    <div class="pn-preferences"><button id="pn-settings" class="pn-plain" type="button">設定</button><button id="pn-reset-size" class="pn-plain" type="button" title="標準の幅・自動の高さ・右上の位置に戻す">サイズをリセット</button><label>文字サイズ <select id="pn-font-size"><option value="14">標準</option><option value="16" selected>大きめ</option><option value="18">さらに大きめ</option></select></label></div>
+    <footer id="pn-save-footer"><div><span id="pn-save-state" role="status">未保存</span><small id="pn-save-hint">訳・メモは保存ボタンで保存されます。</small></div><button id="pn-save" class="pn-primary" type="button">英文と語句を保存</button></footer>
+    ${["nw", "ne", "sw", "se"].map((corner) => `<button type="button" class="pn-resize pn-resize-${corner}" data-corner="${corner}" aria-label="${{ nw: "左上", ne: "右上", sw: "左下", se: "右下" }[corner]}の角からサイズを変更" title="ドラッグでサイズ変更（矢印キーでも調整できます）"></button>`).join("")}`;
   shadow.append(panel);
   document.documentElement.append(phraseNestHost);
   bindPanelEvents(shadow);
   enableDragging(panel, shadow.querySelector("#pn-drag"));
+  enableResizing(panel);
   chrome.storage.local.get("phraseNestPanelPreferences").then(({ phraseNestPanelPreferences }) => {
     if (phraseNestPanelPreferences) panelPreferences = { ...panelPreferences, ...phraseNestPanelPreferences };
     applyPanelPreferences();
@@ -208,6 +212,7 @@ function bindPanelEvents(root) {
   root.querySelector("#pn-open-library").addEventListener("click", () => openLearningPage("sentences"));
   root.querySelector("#pn-open-notes").addEventListener("click", () => openLearningPage("notes"));
   root.querySelector("#pn-open-review").addEventListener("click", () => openLearningPage("today"));
+  root.querySelector("#pn-open-capture").addEventListener("click", () => openLearningPage("capture"));
   root.querySelector("#pn-open-words").addEventListener("click", () => openLearningPage("words"));
   root.querySelector("#pn-open-organize").addEventListener("click", () => openLearningPage("organize"));
   root.querySelector("#pn-resume").addEventListener("click", () => {
@@ -217,8 +222,10 @@ function bindPanelEvents(root) {
   });
   root.querySelector("#pn-wide").addEventListener("click", () => {
     panelPreferences.wide = !panelPreferences.wide;
+    panelPreferences.width = null;
     applyPanelPreferences(); persistPanelPreferences();
   });
+  root.querySelector("#pn-reset-size").addEventListener("click", resetPanelSize);
   root.querySelector("#pn-font-size").addEventListener("change", (event) => {
     panelPreferences.fontSize = Number(event.target.value);
     applyPanelPreferences(); persistPanelPreferences();
@@ -250,10 +257,80 @@ function applyPanelPreferences() {
   root.querySelector("#pn-font-size").value = String(fontSize);
   root.querySelector("#pn-wide").textContent = panelPreferences.wide ? "標準幅" : "ワイド";
   root.querySelector("#pn-wide").setAttribute("aria-pressed", String(Boolean(panelPreferences.wide)));
+  const maximumWidth = Math.max(1, innerWidth - 16);
+  const maximumHeight = Math.max(1, innerHeight - 16);
+  const requestedWidth = Number(panelPreferences.width);
+  const requestedHeight = Number(panelPreferences.height);
+  panel.style.width = `${clampPanelValue(requestedWidth > 0 ? requestedWidth : panelPreferences.wide ? 940 : 560, Math.min(400, maximumWidth), maximumWidth)}px`;
+  panel.style.maxHeight = `${maximumHeight}px`;
+  panel.style.height = requestedHeight > 0 ? `${clampPanelValue(requestedHeight, Math.min(400, maximumHeight), maximumHeight)}px` : "auto";
   const rect = panel.getBoundingClientRect();
-  panel.style.right = `${Math.max(8, Math.min(Number(panelPreferences.right) || 24, innerWidth - rect.width - 8))}px`;
-  panel.style.top = `${Math.max(8, Math.min(Number(panelPreferences.top) || 24, innerHeight - Math.min(rect.height, 180) - 8))}px`;
+  panel.style.right = `${clampPanelValue(Number(panelPreferences.right) || 24, 8, Math.max(8, innerWidth - rect.width - 8))}px`;
+  const top = clampPanelValue(Number(panelPreferences.top) || 24, 8, Math.max(8, innerHeight - rect.height - 8));
+  panel.style.top = `${top}px`;
+  panel.style.maxHeight = `${Math.max(1, innerHeight - top - 8)}px`;
+  panel.classList.toggle("pn-two-columns", rect.width >= 760);
+  panel.classList.toggle("pn-short", maximumHeight < 400);
   root.querySelectorAll("textarea").forEach(resizeLongTextarea);
+}
+
+function clampPanelValue(value, minimum, maximum) { return Math.max(minimum, Math.min(value, maximum)); }
+
+function resetPanelSize() {
+  panelPreferences = { ...panelPreferences, wide: false, width: null, height: null, right: 24, top: 24 };
+  applyPanelPreferences();
+  persistPanelPreferences();
+}
+
+function resizePanelBounds(start, corner, deltaX, deltaY, viewportWidth, viewportHeight) {
+  const west = corner.includes("w");
+  const north = corner.includes("n");
+  const maximumWidth = Math.max(1, west ? start.left + start.width - 8 : viewportWidth - start.left - 8);
+  const maximumHeight = Math.max(1, north ? start.top + start.height - 8 : viewportHeight - start.top - 8);
+  const width = clampPanelValue(start.width + (west ? -deltaX : deltaX), Math.min(400, maximumWidth), maximumWidth);
+  const height = clampPanelValue(start.height + (north ? -deltaY : deltaY), Math.min(400, maximumHeight), maximumHeight);
+  return { width, height, left: west ? start.left + start.width - width : start.left, top: north ? start.top + start.height - height : start.top };
+}
+
+function enableResizing(panel) {
+  panel.querySelectorAll(".pn-resize").forEach((handle) => {
+    let gesture = null;
+    function resize(start, deltaX, deltaY) {
+      const bounds = resizePanelBounds(start, handle.dataset.corner, deltaX, deltaY, innerWidth, innerHeight);
+      panelPreferences.width = bounds.width;
+      panelPreferences.height = bounds.height;
+      panelPreferences.right = innerWidth - bounds.left - bounds.width;
+      panelPreferences.top = bounds.top;
+      applyPanelPreferences();
+    }
+    function finish() {
+      if (!gesture) return;
+      gesture = null;
+      panel.classList.remove("pn-resizing");
+      persistPanelPreferences();
+    }
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      gesture = { rect: panel.getBoundingClientRect(), x: event.clientX, y: event.clientY };
+      panel.classList.add("pn-resizing");
+      handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener("pointermove", (event) => {
+      if (gesture && handle.hasPointerCapture(event.pointerId)) resize(gesture.rect, event.clientX - gesture.x, event.clientY - gesture.y);
+    });
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+    handle.addEventListener("lostpointercapture", finish);
+    handle.addEventListener("keydown", (event) => {
+      const step = event.shiftKey ? 40 : 10;
+      const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[event.key];
+      if (!delta) return;
+      event.preventDefault();
+      resize(panel.getBoundingClientRect(), ...delta);
+      persistPanelPreferences();
+    });
+  });
 }
 
 function persistPanelPreferences() { chrome.storage.local.set({ phraseNestPanelPreferences: panelPreferences }); }
@@ -536,8 +613,8 @@ function showPageToast(text) {
 
 function enableDragging(panel, handle) {
   let startX = 0, startY = 0, startRight = 0, startTop = 0;
-  handle.addEventListener("pointerdown", (event) => { if (event.target.closest("button")) return; const rect = panel.getBoundingClientRect(); startX = event.clientX; startY = event.clientY; startRight = innerWidth - rect.right; startTop = rect.top; handle.setPointerCapture(event.pointerId); });
-  handle.addEventListener("pointermove", (event) => { if (!handle.hasPointerCapture(event.pointerId)) return; panel.style.right = `${Math.max(8, startRight - (event.clientX - startX))}px`; panel.style.top = `${Math.max(8, startTop + event.clientY - startY)}px`; });
+  handle.addEventListener("pointerdown", (event) => { if (event.button !== 0 || event.target.closest("button")) return; const rect = panel.getBoundingClientRect(); startX = event.clientX; startY = event.clientY; startRight = innerWidth - rect.right; startTop = rect.top; handle.setPointerCapture(event.pointerId); });
+  handle.addEventListener("pointermove", (event) => { if (!handle.hasPointerCapture(event.pointerId)) return; const rect = panel.getBoundingClientRect(); panel.style.right = `${clampPanelValue(startRight - (event.clientX - startX), 8, Math.max(8, innerWidth - rect.width - 8))}px`; panel.style.top = `${clampPanelValue(startTop + event.clientY - startY, 8, Math.max(8, innerHeight - rect.height - 8))}px`; });
   handle.addEventListener("pointerup", () => {
     panelPreferences.right = parseFloat(panel.style.right) || 24;
     panelPreferences.top = parseFloat(panel.style.top) || 24;
