@@ -5,8 +5,8 @@ import { applyOrganizationResult, captureSessionFromUrl, consumeReturnTab, getSt
 import { buildOrganizationExport, countPendingOrganizationItems, exportPresets, OrganizationResult, OrganizationSuggestion, parseOrganizationResult } from "./organization";
 import { ManualEntryView } from "./manual-entry";
 import { sentenceSourceLabel } from "./manual-entry-data";
+import { isSavedTab, primaryTab, resolveTab, savedTabStorageKey, type SavedTab, type Tab } from "./navigation";
 
-type Tab = "today" | "words" | "sentences" | "notes" | "organize" | "settings" | "capture";
 type LearningStatus = "unlearned" | "learning" | "mastered";
 type Word = { id: string; term: string; meaning: string; coreImage: string; note: string; status: LearningStatus; occurrences: number; dueLabel: string; example: string; translation: string; createdAt: string; updatedAt: string; organizationCheckedAt: string | null };
 type Sentence = { id: string; source: string; translation: string; note: string; community: string; sourceUrl: string | null; savedAt: string; terms: string[]; updatedAt: string; organizationCheckedAt: string | null };
@@ -16,11 +16,14 @@ const statusLabels: Record<LearningStatus, string> = { unlearned: "未学習", l
 function getInitialTab(): Tab {
   if (typeof window === "undefined") return "today";
   const requestedTab = new URLSearchParams(window.location.search).get("tab") || consumeReturnTab();
-  return requestedTab === "words" || requestedTab === "sentences" || requestedTab === "notes" || requestedTab === "organize" || requestedTab === "settings" || requestedTab === "capture" ? requestedTab : "today";
+  let lastSaved: string | null = null;
+  try { lastSaved = localStorage.getItem(savedTabStorageKey); } catch { /* Optional device preference. */ }
+  return resolveTab(requestedTab, lastSaved);
 }
 
 export function LearningApp() {
   const [tab, setTab] = useState<Tab>(getInitialTab);
+  const [lastSavedTab, setLastSavedTab] = useState<SavedTab>("sentences");
   const [words, setWords] = useState<Word[]>([]);
   const [revealed, setRevealed] = useState(false);
   const [completed, setCompleted] = useState(0);
@@ -35,6 +38,19 @@ export function LearningApp() {
   const [editingWord, setEditingWord] = useState<Word | null>(null);
   const [editingSentence, setEditingSentence] = useState<Sentence | null>(null);
   const [reloadVersion, setReloadVersion] = useState(0);
+
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(savedTabStorageKey);
+      if (isSavedTab(stored)) setLastSavedTab(stored);
+    } catch { /* Navigation works without browser storage. */ }
+  }, []);
+
+  useEffect(() => {
+    if (!isSavedTab(tab)) return;
+    setLastSavedTab(tab);
+    try { localStorage.setItem(savedTabStorageKey, tab); } catch { /* Optional device preference. */ }
+  }, [tab]);
 
   useEffect(() => {
     Promise.resolve().then(() => {
@@ -132,18 +148,14 @@ export function LearningApp() {
       <div className="workspace">
         <aside className="sidebar" aria-label="メインメニュー">
           <nav>
-            <NavButton active={tab === "capture"} label="入力して保存" icon="＋" onClick={() => selectTab("capture")} />
-            <NavButton active={tab === "today"} label="今日の復習" count={reviewQueue.length} icon="◎" onClick={() => selectTab("today")} />
-            <NavButton active={tab === "words"} label="単語・熟語" count={words.length} icon="A" onClick={() => selectTab("words")} />
-            <NavButton active={tab === "sentences"} label="保存した英文" count={sentenceItems.length} icon="¶" onClick={() => selectTab("sentences")} />
-            <NavButton active={tab === "notes"} label="学習メモ" count={noteCount} icon="✎" onClick={() => selectTab("notes")} />
-            <NavButton active={tab === "organize"} label="Codex整理" count={organizationCount} icon="◇" onClick={() => selectTab("organize")} />
+            <PrimaryNavigation tab={tab} onSelect={selectTab} lastSavedTab={lastSavedTab} />
           </nav>
-          <button className={`nav-button ${tab === "settings" ? "active" : ""}`} type="button" onClick={() => selectTab("settings")}><span className="nav-icon">⚙</span><span>設定</span></button>
         </aside>
         <section className="content">
           <div className="manual-entry-panel" hidden={tab !== "capture"}><ManualEntryView onSaved={() => setReloadVersion((version) => version + 1)} onOpenLibrary={() => selectTab("sentences")} onTranslation={(monthlyCharacters) => setUsage((current) => ({ ...current, cloudCharacters: monthlyCharacters }))} /></div>
-          {tab !== "capture" && <><div className="library-search"><label htmlFor="library-search">保存内容をまとめて検索</label><div><input id="library-search" type="search" placeholder="語句・英文・コアイメージ・メモ" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />{searchQuery && <button type="button" onClick={() => setSearchQuery("")}>検索を閉じる</button>}</div></div>
+          {isSavedTab(tab) && <SavedContentNavigation tab={tab} onSelect={selectTab} counts={{ sentences: sentenceItems.length, words: words.length, notes: noteCount }} />}
+          {(tab === "organize" || tab === "settings") && <button className="menu-back" type="button" onClick={() => selectTab("menu")}>メニューに戻る</button>}
+          {tab !== "capture" && <>{(tab === "today" || isSavedTab(tab)) && <div className="library-search"><label htmlFor="library-search">保存内容をまとめて検索</label><div><input id="library-search" type="search" placeholder="語句・英文・コアイメージ・メモ" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />{searchQuery && <button type="button" onClick={() => setSearchQuery("")}>検索を閉じる</button>}</div></div>}
           {searchQuery.trim() ? <SearchView words={words} sentences={sentenceItems} query={searchQuery} onEditWord={setEditingWord} onEditSentence={setEditingSentence} /> : <>
             {tab === "today" && <TodayView words={words} reviewWord={reviewWord} revealed={revealed} completed={completed} remaining={reviewQueue.length} onReveal={() => setRevealed(true)} onAnswer={answerReview} />}
             {tab === "words" && <WordsView words={filteredWords} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onEdit={setEditingWord} />}
@@ -151,22 +163,40 @@ export function LearningApp() {
             {tab === "notes" && <NotesView words={words} sentences={sentenceItems} onEditWord={setEditingWord} onEditSentence={setEditingSentence} />}
             {tab === "organize" && <OrganizationView words={words} sentences={sentenceItems} />}
             {tab === "settings" && <SettingsView connection={connection} error={connectionError} usage={usage} />}
+            {tab === "menu" && <MenuView pendingCount={organizationCount} onSelect={selectTab} />}
           </>}</>}
         </section>
       </div>
       <nav className="mobile-nav" aria-label="モバイルメニュー">
-        <NavButton active={tab === "capture"} label="入力" icon="＋" onClick={() => selectTab("capture")} />
-        <NavButton active={tab === "today"} label="復習" icon="◎" onClick={() => selectTab("today")} />
-        <NavButton active={tab === "words"} label="語句" icon="A" onClick={() => selectTab("words")} />
-        <NavButton active={tab === "sentences"} label="英文" icon="¶" onClick={() => selectTab("sentences")} />
-        <NavButton active={tab === "notes"} label="メモ" icon="✎" onClick={() => selectTab("notes")} />
-        <NavButton active={tab === "organize"} label="整理" icon="◇" onClick={() => selectTab("organize")} />
-        <NavButton active={tab === "settings"} label="設定" icon="⚙" onClick={() => selectTab("settings")} />
+        <PrimaryNavigation tab={tab} onSelect={selectTab} lastSavedTab={lastSavedTab} mobile />
       </nav>
       {editingWord && <WordEditor key={editingWord.id} word={editingWord} onClose={() => setEditingWord(null)} onSave={saveWordEdit} />}
       {editingSentence && <SentenceEditor key={editingSentence.id} sentence={editingSentence} onClose={() => setEditingSentence(null)} onSave={saveSentenceEdit} />}
     </main>
   );
+}
+
+export function PrimaryNavigation({ tab, lastSavedTab, onSelect, mobile = false }: { tab: Tab; lastSavedTab: SavedTab; onSelect: (tab: Tab) => void; mobile?: boolean }) {
+  const active = primaryTab(tab);
+  return <>
+    <NavButton active={active === "capture"} label={mobile ? "入力" : "入力して保存"} icon="＋" onClick={() => onSelect("capture")} />
+    <NavButton active={active === "today"} label="今日の復習" icon="◎" onClick={() => onSelect("today")} />
+    <NavButton active={active === "library"} label="保存内容" icon="▤" onClick={() => onSelect(lastSavedTab)} />
+    <NavButton active={active === "menu"} label="メニュー" icon="☰" onClick={() => onSelect("menu")} />
+  </>;
+}
+
+export function SavedContentNavigation({ tab, onSelect, counts }: { tab: SavedTab; onSelect: (tab: Tab) => void; counts: Record<SavedTab, number> }) {
+  return <nav className="saved-content-nav" aria-label="保存内容の種類">
+    {([['sentences', '英文'], ['words', '単語・熟語'], ['notes', '学習メモ']] as const).map(([value, label]) => <button type="button" key={value} className={tab === value ? "active" : ""} aria-current={tab === value ? "page" : undefined} onClick={() => onSelect(value)}><span>{label}</span><small>{counts[value]}</small></button>)}
+  </nav>;
+}
+
+export function MenuView({ pendingCount, onSelect }: { pendingCount: number; onSelect: (tab: Tab) => void }) {
+  return <><PageHeading eyebrow="MENU" title="メニュー" description="" /><div className="menu-options">
+    <button type="button" className="menu-option" onClick={() => onSelect("organize")}><span className="menu-option-icon" aria-hidden="true">◇</span><span><strong>Codex整理</strong><span>メモや熟語の整理・結果の読み込み</span></span><small>未整理 {pendingCount}件</small></button>
+    <button type="button" className="menu-option" onClick={() => onSelect("settings")}><span className="menu-option-icon" aria-hidden="true">⚙</span><span><strong>設定</strong><span>接続情報・翻訳の使用量・ログイン</span></span></button>
+  </div></>;
 }
 
 function TodayView({ words, reviewWord, revealed, completed, remaining, onReveal, onAnswer }: { words: Word[]; reviewWord?: Word; revealed: boolean; completed: number; remaining: number; onReveal: () => void; onAnswer: (result: "forgot" | "uncertain" | "remembered") => void }) {
@@ -370,7 +400,7 @@ function LoginGate({ checking = false }: { checking?: boolean }) {
 }
 
 function PageHeading({ eyebrow, title, description, extra }: { eyebrow: string; title: string; description: string; extra?: React.ReactNode }) { return <div className="page-heading"><div><p className="eyebrow">{eyebrow}</p><h1>{title}</h1><p>{description}</p></div>{extra}</div>; }
-function NavButton({ active, label, count, icon, onClick }: { active: boolean; label: string; count?: number; icon: string; onClick: () => void }) { return <button className={`nav-button ${active ? "active" : ""}`} type="button" onClick={onClick}><span className="nav-icon">{icon}</span><span>{label}</span>{typeof count === "number" && <small>{count}</small>}</button>; }
+function NavButton({ active, label, count, icon, onClick }: { active: boolean; label: string; count?: number; icon: string; onClick: () => void }) { return <button className={`nav-button ${active ? "active" : ""}`} aria-current={active ? "page" : undefined} type="button" onClick={onClick}><span className="nav-icon" aria-hidden="true">{icon}</span><span>{label}</span>{typeof count === "number" && <small>{count}</small>}</button>; }
 function AnswerButton({ kind, title, sub, onClick }: { kind: string; title: string; sub: string; onClick: () => void }) { return <button type="button" className={`answer ${kind}`} onClick={onClick}><strong>{title}</strong><small>{sub}</small></button>; }
 function SummaryRow({ kind, label, value }: { kind: string; label: string; value: number }) { return <div className="summary-row"><span className={`dot ${kind}`} />{label}<strong>{value}</strong></div>; }
 function Usage({ label, current, max, ratio }: { label: string; current: string; max: string; ratio: number }) { return <div className="usage"><div><span>{label}</span><strong>{current} <small>/ {max}</small></strong></div><div className="usage-bar"><span style={{ width: `${Math.min(100, Math.max(0, ratio * 100))}%` }} /></div></div>; }

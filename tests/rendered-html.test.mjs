@@ -284,3 +284,37 @@ test("manual form renders editable inputs without invoking paid services", async
   assert.match(html, /語句を追加/);
   assert.equal(serviceCalls, 0);
 });
+
+test("four primary destinations group saved content and retain direct links", async () => {
+  const navigation = await loadTypeScriptModule("../app/navigation.ts");
+  assert.equal(navigation.resolveTab("library", "notes"), "notes");
+  assert.equal(navigation.resolveTab("library", "invalid"), "sentences");
+  for (const tab of ["words", "sentences", "notes"]) {
+    assert.equal(navigation.resolveTab(tab, "sentences"), tab);
+    assert.equal(navigation.primaryTab(tab), "library");
+  }
+  for (const tab of ["menu", "organize", "settings"]) assert.equal(navigation.primaryTab(tab), "menu");
+  assert.equal(navigation.resolveTab("unknown", "notes"), "today");
+  const app = await loadTypeScriptModule("../app/learning-app.tsx", { require: name => name === "./navigation" ? navigation : name.startsWith(".") ? {} : nodeRequire(name) });
+  const selections = [];
+  const props = { tab:"notes", lastSavedTab:"notes", mobile:true, onSelect:tab => selections.push(tab) };
+  const element = app.PrimaryNavigation(props);
+  assert.equal(element.props.children.length, 4);
+  element.props.children[2].props.onClick();
+  assert.deepEqual(selections, ["notes"]);
+  const html = renderToStaticMarkup(createElement(app.PrimaryNavigation, props));
+  assert.equal((html.match(/<button /g) || []).length, 4);
+  assert.match(html, /今日の復習/);
+  assert.match(html, /aria-current="page"[^>]*>[\s\S]*?保存内容/);
+  assert.doesNotMatch(html, /Codex整理|学習メモ|単語・熟語/);
+  const savedHtml = renderToStaticMarkup(createElement(app.SavedContentNavigation, { tab:"notes", counts:{ sentences:2, words:3, notes:4 }, onSelect:props.onSelect }));
+  assert.equal((savedHtml.match(/<button /g) || []).length, 3);
+  assert.match(savedHtml, /英文/); assert.match(savedHtml, /単語・熟語/); assert.match(savedHtml, /学習メモ/);
+  const menu = app.MenuView({ pendingCount:5, onSelect:props.onSelect });
+  const options = menu.props.children[1].props.children;
+  options[0].props.onClick(); options[1].props.onClick();
+  assert.deepEqual(selections, ["notes", "organize", "settings"]);
+  const menuHtml = renderToStaticMarkup(menu);
+  assert.match(menuHtml, /未整理 5件/);
+  assert.match(menuHtml, /設定/);
+});
