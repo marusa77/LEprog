@@ -13,27 +13,38 @@ export function ManualEntryView({ onSaved, onOpenLibrary, onTranslation }: { onS
   const [terms, setTerms] = useState<Array<ManualTerm & { key: number }>>([]);
   const nextKey = useRef(0);
   const operation = useRef(false);
+  const englishInput = useRef<HTMLTextAreaElement>(null);
+  const focusAfterSave = useRef(false);
   const [busy, setBusy] = useState<"en-ja" | "ja-en" | "save" | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
-  const [saved, setSaved] = useState<CaptureResult | null>(null);
+  const [lastSaved, setLastSaved] = useState<CaptureResult | null>(null);
   const [machineTranslation, setMachineTranslation] = useState<string | null>(null);
   const hasInput = Boolean(english || japanese || note || sourceUrl || terms.some((row) => row.term || row.meaning || row.core_image || row.note));
 
   useEffect(() => {
     function warnBeforeLeaving(event: BeforeUnloadEvent) {
-      if (hasInput && !saved) { event.preventDefault(); event.returnValue = ""; }
+      if (hasInput) { event.preventDefault(); event.returnValue = ""; }
     }
     window.addEventListener("beforeunload", warnBeforeLeaving);
     return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
-  }, [hasInput, saved]);
+  }, [hasInput]);
+
+  useEffect(() => {
+    if (busy || !focusAfterSave.current) return;
+    focusAfterSave.current = false;
+    const input = englishInput.current;
+    if (!input || !input.getClientRects().length) return;
+    input.focus({ preventScroll: true });
+    input.scrollIntoView({ block: "center" });
+  }, [busy]);
 
   function editTerm(key: number, field: keyof ManualTerm, value: string) {
     setTerms((current) => current.map((row) => row.key === key ? { ...row, [field]: value } : row));
   }
 
   async function translate(source: "en" | "ja") {
-    if (operation.current || saved) return;
+    if (operation.current) return;
     const input = source === "en" ? english : japanese;
     if (!input.trim()) { setError(source === "en" ? "翻訳する英文を入力してください。" : "英語にしたい日本語を入力してください。"); return; }
     const destination = source === "en" ? japanese : english;
@@ -51,29 +62,36 @@ export function ManualEntryView({ onSaved, onOpenLibrary, onTranslation }: { onS
 
   async function save(event: React.FormEvent) {
     event.preventDefault();
-    if (operation.current || saved) return;
+    if (operation.current || !english.trim() || !japanese.trim()) return;
     operation.current = true; setBusy("save"); setError(""); setMessage("");
     try {
       const result = await saveManualEntry({ english, japanese, note, origin, sourceUrl, terms, machineTranslation });
-      setSaved(result);
-      const duplicates = result.terms.filter((term) => term.existing).length;
-      setMessage(`保存しました。${duplicates ? `登録済みの語句 ${duplicates}件は登場回数を増やしました。既存の意味やメモは上書きしていません。` : ""}`);
+      resetInputs();
+      setLastSaved(result);
+      focusAfterSave.current = true;
       onSaved();
     } catch (saveError) { setError(saveError instanceof Error ? saveError.message : "保存できませんでした。入力内容は残しています。"); }
     finally { operation.current = false; setBusy(null); }
   }
 
-  function clear() {
-    if (operation.current || (hasInput && !saved && !window.confirm("未保存の入力内容を消して、新しく入力しますか？"))) return;
-    setEnglish(""); setJapanese(""); setNote(""); setOrigin("daily"); setSourceUrl(""); setTerms([]); setMachineTranslation(null); setSaved(null); setMessage(""); setError("");
+  function resetInputs() {
+    setEnglish(""); setJapanese(""); setNote(""); setOrigin("daily"); setSourceUrl(""); setTerms([]); setMachineTranslation(null);
   }
+
+  function clear() {
+    if (operation.current || (hasInput && !window.confirm("未保存の入力内容を消して、新しく入力しますか？"))) return;
+    resetInputs(); setLastSaved(null); setMessage(""); setError("");
+  }
+
+  const duplicateCount = lastSaved?.terms.filter((term) => term.existing).length || 0;
 
   return <>
     <div className="page-heading"><div><p className="eyebrow">ADD YOUR ENGLISH</p><h1>入力して保存</h1><p>他サイトの英文や、日常で使いたい英語を登録できます。</p></div></div>
+    {lastSaved && <div className="manual-feedback" role="status"><span>直前の英文を保存しました。次の文を入力できます。{duplicateCount > 0 && `登録済みの語句 ${duplicateCount}件は登場回数を増やしました。既存の意味やメモは上書きしていません。`}</span><button className="plain-action" type="button" onClick={onOpenLibrary}>保存した英文を見る</button></div>}
     <form className="manual-entry" onSubmit={save}>
-      <fieldset disabled={Boolean(busy) || Boolean(saved)} className="manual-fields">
+      <fieldset disabled={Boolean(busy)} className="manual-fields">
         <div className="manual-language-grid">
-          <div className="manual-language-card"><label htmlFor="manual-english">英文</label><textarea id="manual-english" value={english} onChange={(event) => { setEnglish(event.target.value); setMachineTranslation(null); }} rows={6} placeholder="例：Please draw one slip. または他サイトの英文を貼り付け" required /><button className="plain-action" type="button" disabled={!english.trim() || Boolean(busy)} onClick={() => void translate("en")}>{busy === "en-ja" ? "翻訳中…" : "英語を日本語に翻訳"}</button></div>
+          <div className="manual-language-card"><label htmlFor="manual-english">英文</label><textarea id="manual-english" ref={englishInput} value={english} onChange={(event) => { setEnglish(event.target.value); setMachineTranslation(null); }} rows={6} placeholder="例：Please draw one slip. または他サイトの英文を貼り付け" required /><button className="plain-action" type="button" disabled={!english.trim() || Boolean(busy)} onClick={() => void translate("en")}>{busy === "en-ja" ? "翻訳中…" : "英語を日本語に翻訳"}</button></div>
           <div className="manual-language-card"><label htmlFor="manual-japanese">日本語訳・言いたいこと</label><textarea id="manual-japanese" value={japanese} onChange={(event) => setJapanese(event.target.value)} rows={6} placeholder="例：1枚引いてください。自分で用意した訳を貼り付けてもOK" required /><button className="plain-action" type="button" disabled={!japanese.trim() || Boolean(busy)} onClick={() => void translate("ja")}>{busy === "ja-en" ? "翻訳中…" : "日本語を英語に翻訳"}</button></div>
         </div>
         <p className="manual-help">両方を自分で入力すれば、そのまま保存できます。Google翻訳は上のボタンを押したときだけ使い、月45万文字の枠に含まれます。単語の意味も自動では翻訳しません。</p>
@@ -86,8 +104,8 @@ export function ManualEntryView({ onSaved, onOpenLibrary, onTranslation }: { onS
       </fieldset>
       {error && <p className="manual-feedback error" role="alert">{error}</p>}
       {message && <p className="manual-feedback" role="status">{message}</p>}
-      <div className="manual-save-bar"><span>{busy === "save" ? "保存中…" : saved ? "保存済み" : hasInput ? "未保存の入力があります" : "入力待ち"}</span><div>{saved ? <><button className="plain-action" type="button" onClick={onOpenLibrary}>保存した英文を見る</button><button className="primary-button" type="button" onClick={clear}>続けて新しく入力</button></> : <><button className="plain-action" type="button" disabled={Boolean(busy)} onClick={clear}>入力をクリア</button><button className="primary-button" type="submit" disabled={Boolean(busy)}>{busy === "save" ? "保存中…" : "英文と語句を保存"}</button></>}</div></div>
-      {saved && <p className="manual-help">保存済みの内容を直す場合は「保存した英文」や「単語・熟語」の編集を使ってください。</p>}
+      <div className="manual-save-bar"><span>{busy === "save" ? "保存中…" : hasInput ? "未保存の入力があります" : "入力待ち"}</span><div><button className="plain-action" type="button" disabled={Boolean(busy) || !hasInput} onClick={clear}>入力をクリア</button><button className="primary-button" type="submit" disabled={Boolean(busy) || !english.trim() || !japanese.trim()}>{busy === "save" ? "保存中…" : "英文と語句を保存"}</button></div></div>
+      {lastSaved && <p className="manual-help">保存済みの内容を直す場合は「保存した英文」や「単語・熟語」の編集を使ってください。</p>}
     </form>
   </>;
 }

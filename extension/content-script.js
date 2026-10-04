@@ -166,7 +166,16 @@ function createPanel() {
   panel.innerHTML = `
     <div class="pn-top">
       <header class="pn-header" id="pn-drag"><div class="pn-brand"><span>P</span><div><strong>PhraseNest</strong><small id="pn-provider">英語学習ノート</small></div></div><div class="pn-header-actions"><button id="pn-wide" class="pn-secondary" type="button" aria-pressed="false">ワイド</button><button id="pn-close" class="pn-icon" type="button" aria-label="閉じる">×</button></div></header>
-      <nav class="pn-app-links" aria-label="保存内容と復習"><button id="pn-open-capture" class="pn-secondary" type="button">入力して保存</button><button id="pn-open-review" class="pn-secondary" type="button">今日の復習</button><button id="pn-open-words" class="pn-secondary" type="button">単語・熟語</button><button id="pn-open-library" class="pn-secondary" type="button">保存内容</button><button id="pn-open-notes" class="pn-secondary" type="button">学習メモ</button><button id="pn-open-organize" class="pn-secondary" type="button">整理</button></nav>
+      <nav class="pn-app-links" aria-label="保存内容と復習">
+        <button id="pn-open-capture" class="pn-secondary" type="button" title="入力して保存">入力</button>
+        <button id="pn-open-review" class="pn-secondary" type="button">今日の復習</button>
+        <button id="pn-open-library" class="pn-secondary" type="button">保存内容</button>
+        <details id="pn-menu" class="pn-menu"><summary>メニュー</summary><div class="pn-menu-content">
+          <div class="pn-menu-group"><span class="pn-menu-heading">保存内容の種類</span><button id="pn-open-words" class="pn-secondary" type="button">単語・熟語</button><button id="pn-open-notes" class="pn-secondary" type="button">学習メモ</button></div>
+          <div class="pn-menu-group"><span class="pn-menu-heading">管理</span><button id="pn-open-organize" class="pn-secondary" type="button">整理</button><button id="pn-settings" class="pn-secondary" type="button">拡張機能の設定</button></div>
+          <div class="pn-menu-group"><span class="pn-menu-heading">小窓の表示</span><button id="pn-reset-size" class="pn-secondary" type="button" title="標準の幅・自動の高さ・右上の位置に戻す">サイズをリセット</button><label class="pn-font-preference">文字サイズ <select id="pn-font-size"><option value="14">標準</option><option value="16" selected>大きめ</option><option value="18">さらに大きめ</option></select></label></div>
+        </div></details>
+      </nav>
     </div>
     <div id="pn-launcher" class="pn-body pn-launcher" hidden><h2>今日は何を確認しますか？</h2><p>上のメニューから、保存内容や復習をすぐに開けます。</p><p>翻訳するときはRedditの英文を選択して、Ctrl + Shift + Y を押してください。</p><button id="pn-resume" class="pn-secondary pn-full" type="button" hidden>入力中の英文に戻る</button></div>
     <div class="pn-body" id="pn-editor">
@@ -188,7 +197,6 @@ function createPanel() {
       <div id="pn-terms" class="pn-terms"></div>
       <p id="pn-message" class="pn-message" role="status"></p>
     </div>
-    <div class="pn-preferences"><button id="pn-settings" class="pn-plain" type="button">設定</button><button id="pn-reset-size" class="pn-plain" type="button" title="標準の幅・自動の高さ・右上の位置に戻す">サイズをリセット</button><label>文字サイズ <select id="pn-font-size"><option value="14">標準</option><option value="16" selected>大きめ</option><option value="18">さらに大きめ</option></select></label></div>
     <footer id="pn-save-footer"><div><span id="pn-save-state" role="status">未保存</span><small id="pn-save-hint">訳・メモは保存ボタンで保存されます。</small></div><button id="pn-save" class="pn-primary" type="button">英文と語句を保存</button></footer>
     ${["nw", "ne", "sw", "se"].map((corner) => `<button type="button" class="pn-resize pn-resize-${corner}" data-corner="${corner}" aria-label="${{ nw: "左上", ne: "右上", sw: "左下", se: "右下" }[corner]}の角からサイズを変更" title="ドラッグでサイズ変更（矢印キーでも調整できます）"></button>`).join("")}`;
   shadow.append(panel);
@@ -207,14 +215,8 @@ function bindPanelEvents(root) {
     textarea.addEventListener("input", () => resizeLongTextarea(textarea));
     resizeLongTextarea(textarea);
   });
-  root.querySelector("#pn-close").addEventListener("click", () => { phraseNestHost.hidden = true; });
-  root.querySelector("#pn-settings").addEventListener("click", () => chrome.runtime.openOptionsPage());
-  root.querySelector("#pn-open-library").addEventListener("click", () => openLearningPage("sentences"));
-  root.querySelector("#pn-open-notes").addEventListener("click", () => openLearningPage("notes"));
-  root.querySelector("#pn-open-review").addEventListener("click", () => openLearningPage("today"));
-  root.querySelector("#pn-open-capture").addEventListener("click", () => openLearningPage("capture"));
-  root.querySelector("#pn-open-words").addEventListener("click", () => openLearningPage("words"));
-  root.querySelector("#pn-open-organize").addEventListener("click", () => openLearningPage("organize"));
+  root.querySelector("#pn-close").addEventListener("click", () => { root.querySelector("#pn-menu").open = false; phraseNestHost.hidden = true; });
+  bindNavigationEvents(root);
   root.querySelector("#pn-resume").addEventListener("click", () => {
     root.querySelector("#pn-launcher").hidden = true;
     root.querySelector("#pn-editor").hidden = false;
@@ -244,8 +246,36 @@ function bindPanelEvents(root) {
   root.querySelector("#pn-local").addEventListener("click", useLocalTranslation);
   root.querySelector("#pn-cloud").addEventListener("click", useCloudTranslation);
   root.querySelector("#pn-save").addEventListener("click", saveCapture);
-  document.addEventListener("keydown", (event) => { if (event.key === "Escape" && phraseNestHost && !phraseNestHost.hidden) phraseNestHost.hidden = true; });
+  document.addEventListener("keydown", handlePanelEscape);
   window.addEventListener("resize", applyPanelPreferences);
+}
+
+function bindNavigationEvents(root) {
+  const menu = root.querySelector("#pn-menu");
+  menu.addEventListener("toggle", () => { if (menu.open) updateMenuMaxHeight(root); });
+  for (const [id, tab] of [["capture", "capture"], ["review", "today"], ["library", "library"], ["words", "words"], ["notes", "notes"], ["organize", "organize"]]) {
+    root.querySelector(`#pn-open-${id}`).addEventListener("click", () => {
+      menu.open = false;
+      openLearningPage(tab);
+    });
+  }
+  root.querySelector("#pn-settings").addEventListener("click", () => {
+    menu.open = false;
+    chrome.runtime.openOptionsPage();
+  });
+  document.addEventListener("click", (event) => {
+    if (menu.open && !event.composedPath().includes(menu)) menu.open = false;
+  });
+}
+
+function handlePanelEscape(event) {
+  if (event.key !== "Escape" || !phraseNestHost || phraseNestHost.hidden) return;
+  const menu = phraseNestHost.shadowRoot.querySelector("#pn-menu");
+  if (menu?.open) {
+    menu.open = false;
+    menu.querySelector("summary").focus();
+    event.preventDefault();
+  } else phraseNestHost.hidden = true;
 }
 
 function applyPanelPreferences() {
@@ -272,6 +302,15 @@ function applyPanelPreferences() {
   panel.classList.toggle("pn-two-columns", rect.width >= 760);
   panel.classList.toggle("pn-short", maximumHeight < 400);
   root.querySelectorAll("textarea").forEach(resizeLongTextarea);
+  updateMenuMaxHeight(root);
+}
+
+function updateMenuMaxHeight(root) {
+  const navigation = root.querySelector(".pn-app-links");
+  if (!navigation) return;
+  const panel = root.querySelector(".pn-panel");
+  const available = panel.getBoundingClientRect().bottom - navigation.getBoundingClientRect().bottom - 12;
+  panel.style.setProperty("--menu-max-height", `${Math.max(40, available)}px`);
 }
 
 function clampPanelValue(value, minimum, maximum) { return Math.max(minimum, Math.min(value, maximum)); }

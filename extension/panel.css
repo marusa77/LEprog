@@ -64,11 +64,12 @@ textarea { resize: vertical; max-height: 420px; overflow-y: hidden; scrollbar-gu
 .pn-remove { font-size: 18px; }
 .pn-message { min-height: 20px; margin: 14px 0 0; color: var(--green); font-size: 14px; font-weight: 600; }
 .pn-message.pn-error { color: #a4473e; }
-.pn-app-links { display: flex; gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); overflow-x: auto; }
-.pn-app-links button { padding: 9px 10px; font-size: 14px; white-space: nowrap; }
-.pn-preferences { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 8px; padding: 6px 14px; border-top: 1px solid var(--line); flex-shrink: 0; }
-.pn-preferences button { padding: 6px 4px; }
-.pn-preferences label { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
+.pn-app-links { position: relative; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 6px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.pn-app-links > button,.pn-menu > summary { min-height: 42px; padding: 9px 4px; font-size: 14px; text-align: center; overflow-wrap: anywhere; }
+.pn-menu > summary { display: flex; justify-content: center; align-items: center; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); cursor: pointer; font-weight: 600; list-style: none; }
+.pn-menu > summary::-webkit-details-marker { display: none; }.pn-menu[open] > summary { background: var(--mint); border-color: var(--green); color: var(--green-dark); }
+.pn-menu-content { position: absolute; z-index: 5; top: calc(100% - 3px); right: 14px; width: min(360px,calc(100% - 28px)); max-height: min(360px,var(--menu-max-height,50vh)); overflow-y: auto; overscroll-behavior: contain; padding: 14px; border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(20,35,30,.2); background: var(--surface); }
+.pn-menu-group { display: grid; gap: 8px; }.pn-menu-group + .pn-menu-group { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }.pn-menu-heading { font-size: 12px; color: var(--muted); }.pn-menu-group button { width: 100%; text-align: left; }.pn-font-preference { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--ink); font-size: 14px; }
 select { padding: 6px; border: 1px solid var(--line); border-radius: 6px; background: white; color: var(--ink); font: 14px var(--font-sans); }
 footer { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 18px; border-top: 1px solid var(--line); background: var(--surface); flex-shrink: 0; }
 footer > div { min-width: 0; }
@@ -81,7 +82,7 @@ footer small { display: block; margin-top: 3px; font-size: 12px; color: var(--mu
 .pn-source { font-size: var(--reading-size); line-height: 1.75; overflow-wrap: anywhere; white-space: pre-wrap; }
 .pn-launcher { padding: 20px; }.pn-launcher h2 { margin: 0 0 10px; font-size: 19px; }.pn-launcher p { font-size: 16px; color: var(--muted); line-height: 1.75; }
 .pn-panel [hidden] { display: none !important; }
-.pn-panel button:focus-visible, select:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
+.pn-panel button:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid var(--amber); outline-offset: 2px; }
 .pn-resize { position: absolute; z-index: 4; width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--muted); touch-action: none; }
 .pn-resize::after { content: ""; position: absolute; width: 9px; height: 9px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; }
 .pn-resize:hover,.pn-resize:focus-visible { color: var(--green); background: var(--mint); border-radius: 4px; }
@@ -100,5 +101,5 @@ footer small { display: block; margin-top: 3px; font-size: 12px; color: var(--mu
 }
 @media (max-width: 399px) {
   .pn-header { padding-left: 12px; padding-right: 12px; }.pn-brand > span { display: none; }
-  .pn-preferences label { width: 100%; justify-content: space-between; }
+  .pn-app-links { padding-left: 8px; padding-right: 8px; gap: 4px; }
 }

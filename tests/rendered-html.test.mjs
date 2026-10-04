@@ -285,6 +285,97 @@ test("manual form renders editable inputs without invoking paid services", async
   assert.equal(serviceCalls, 0);
 });
 
+test("manual form clears only successful saves, supports consecutive entries and protects the next draft", async () => {
+  const hooks = [];
+  let cursor = 0;
+  let effects = [];
+  const listeners = new Map();
+  const calls = [];
+  let resolveSave;
+  let rejectSave;
+  let focusCount = 0;
+  let scrollCount = 0;
+  let refreshCount = 0;
+  let translationCalls = 0;
+  let confirmed = 0;
+  const fakeReact = {
+    useState(initial) {
+      const slot = cursor++;
+      if (!(slot in hooks)) hooks[slot] = typeof initial === "function" ? initial() : initial;
+      return [hooks[slot], value => { hooks[slot] = typeof value === "function" ? value(hooks[slot]) : value; }];
+    },
+    useRef(initial) { const slot = cursor++; return hooks[slot] ||= { current:initial }; },
+    useEffect(callback, deps) {
+      const slot = cursor++;
+      const previous = hooks[slot];
+      if (!previous || deps.some((value, index) => !Object.is(value, previous.deps[index]))) {
+        effects.push(() => { previous?.cleanup?.(); hooks[slot] = { deps, cleanup:callback() }; });
+      }
+    },
+  };
+  const module = await loadTypeScriptModule("../app/manual-entry.tsx", {
+    Error,
+    window:{ addEventListener:(name, callback) => listeners.set(name, callback), removeEventListener:name => listeners.delete(name), confirm() { confirmed++; return false; } },
+    require:name => name === "react" ? fakeReact : name === "./supabase-browser" ? {
+      saveManualEntry(entry) { calls.push(entry); return new Promise((resolve, reject) => { resolveSave = resolve; rejectSave = reject; }); },
+      translateManualText() { translationCalls++; },
+    } : nodeRequire(name),
+  });
+  function nodes(element) {
+    if (Array.isArray(element)) return element.flatMap(nodes);
+    if (!element || typeof element !== "object") return [];
+    return [element, ...nodes(element.props?.children)];
+  }
+  let tree;
+  const input = { getClientRects:() => [{}], focus() { focusCount++; }, scrollIntoView() { scrollCount++; } };
+  const find = predicate => nodes(tree).find(predicate);
+  function renderForm() {
+    cursor = 0; effects = [];
+    tree = module.ManualEntryView({ onSaved() { refreshCount++; }, onOpenLibrary() {}, onTranslation() {} });
+    find(node => node.props?.id === "manual-english").props.ref.current = input;
+    effects.forEach(effect => effect());
+  }
+  function fill(id, value) { find(node => node.props?.id === id).props.onChange({ target:{ value } }); renderForm(); }
+  function submit() { return find(node => node.type === "form").props.onSubmit({ preventDefault() {} }); }
+  renderForm();
+  fill("manual-english", "Please draw one slip."); fill("manual-japanese", "1枚引いてください"); fill("manual-note", "保存するメモ");
+  find(node => node.type === "select").props.onChange({ target:{ value:"external" } }); renderForm();
+  find(node => node.props?.type === "url").props.onChange({ target:{ value:"https://example.com/" } }); renderForm();
+  find(node => node.type === "button" && node.props.children === "語句を追加").props.onClick(); renderForm();
+  find(node => node.props?.placeholder === "例：draw lots").props.onChange({ target:{ value:"draw lots" } }); renderForm();
+  find(node => node.props?.placeholder === "例：くじを引く").props.onChange({ target:{ value:"くじを引く" } }); renderForm();
+  const first = submit(); renderForm();
+  await submit(); assert.equal(calls.length, 1);
+  assert.equal(find(node => node.type === "fieldset").props.disabled, true);
+  resolveSave({ sentence_id:"first", terms:[{ existing:true }] }); await first; renderForm();
+  for (const id of ["manual-english", "manual-japanese", "manual-note"]) assert.equal(find(node => node.props?.id === id).props.value, "");
+  assert.equal(find(node => node.props?.type === "url").props.value, "");
+  assert.equal(find(node => node.type === "select").props.value, "daily");
+  assert.equal(find(node => node.props?.placeholder === "例：draw lots"), undefined);
+  assert.equal(find(node => node.type === "fieldset").props.disabled, false);
+  assert.match(renderToStaticMarkup(tree), /直前の英文を保存しました/);
+  assert.match(renderToStaticMarkup(tree), /登録済みの語句 1件/);
+  assert.match(renderToStaticMarkup(tree), /保存した英文を見る/);
+  assert.equal(focusCount, 1); assert.equal(scrollCount, 1); assert.equal(refreshCount, 1);
+  await submit(); assert.equal(calls.length, 1);
+  let warned = false;
+  const leaving = { preventDefault() { warned = true; }, returnValue:null };
+  listeners.get("beforeunload")(leaving); assert.equal(warned, false);
+  fill("manual-english", "Keep going."); fill("manual-japanese", "続けて。");
+  listeners.get("beforeunload")(leaving); assert.equal(warned, true);
+  find(node => node.type === "button" && node.props.children === "入力をクリア").props.onClick(); renderForm();
+  assert.equal(confirmed, 1); assert.equal(find(node => node.props?.id === "manual-english").props.value, "Keep going.");
+  const second = submit(); renderForm(); rejectSave(new Error("テスト接続エラー")); await second; renderForm();
+  assert.equal(find(node => node.props?.id === "manual-english").props.value, "Keep going.");
+  assert.equal(find(node => node.props?.id === "manual-japanese").props.value, "続けて。");
+  assert.match(renderToStaticMarkup(tree), /テスト接続エラー/); assert.equal(focusCount, 1);
+  const retry = submit(); renderForm(); resolveSave({ sentence_id:"second", terms:[] }); await retry; renderForm();
+  assert.equal(find(node => node.props?.id === "manual-english").props.value, "");
+  assert.equal(calls.length, 3); assert.equal(refreshCount, 2); assert.equal(focusCount, 2);
+  assert.equal(calls[0].terms[0].term, "draw lots");
+  assert.equal(calls[1].english, "Keep going."); assert.equal(translationCalls, 0);
+});
+
 test("four primary destinations group saved content and retain direct links", async () => {
   const navigation = await loadTypeScriptModule("../app/navigation.ts");
   assert.equal(navigation.resolveTab("library", "notes"), "notes");
@@ -317,4 +408,55 @@ test("four primary destinations group saved content and retain direct links", as
   const menuHtml = renderToStaticMarkup(menu);
   assert.match(menuHtml, /未整理 5件/);
   assert.match(menuHtml, /設定/);
+});
+
+test("Reddit panel folds secondary actions and closes its menu without losing the draft", async () => {
+  const script = await readFile(new URL("../extension/content-script.js", import.meta.url), "utf8");
+  const launcher = await readFile(new URL("../extension/launcher.html", import.meta.url), "utf8");
+  const navigationMarkup = script.slice(script.indexOf('<nav class="pn-app-links"'), script.indexOf('</nav>'));
+  assert.equal((navigationMarkup.split('<details')[0].match(/<button /g) || []).length, 3);
+  assert.match(navigationMarkup, /<details id="pn-menu"/);
+  assert.match(navigationMarkup, /<summary>メニュー<\/summary>/);
+  assert.doesNotMatch(script, /class="pn-preferences"/);
+  assert.equal((launcher.split('<details')[0].match(/<a data-tab=/g) || []).length, 3);
+  assert.match(launcher, /data-tab="library"/);
+  const elements = new Map();
+  const documentEvents = new Map();
+  const opened = [];
+  let optionsCount = 0;
+  let focusCount = 0;
+  for (const name of ["capture", "review", "library", "words", "notes", "organize"]) elements.set(`#pn-open-${name}`, { events:new Map(), addEventListener(event, callback) { this.events.set(event, callback); } });
+  const settings = { events:new Map(), addEventListener(event, callback) { this.events.set(event, callback); } };
+  const menu = { ...settings, events:new Map(), open:true, querySelector:() => ({ focus() { focusCount++; } }) };
+  elements.set("#pn-settings", settings); elements.set("#pn-menu", menu);
+  const style = { setProperty(name, value) { this[name] = value; } };
+  elements.set(".pn-panel", { style, getBoundingClientRect:() => ({ bottom:420 }) });
+  elements.set(".pn-app-links", { getBoundingClientRect:() => ({ bottom:140 }) });
+  elements.set("#pn-note", { value:"自分のメモ" });
+  const root = { querySelector:selector => elements.get(selector) };
+  const host = { shadowRoot:root, hidden:false };
+  const context = { root, host, URL, document:{ addEventListener:(event, callback) => documentEvents.set(event, callback) }, window:{ open:url => opened.push(url) }, chrome:{ runtime:{ onMessage:{ addListener() {} }, openOptionsPage() { optionsCount++; } } } };
+  vm.createContext(context); vm.runInContext(script, context);
+  vm.runInContext('phraseNestHost = host; selectedPageText = "Keep going."; bindNavigationEvents(root)', context);
+  menu.events.get("toggle")();
+  assert.equal(style["--menu-max-height"], "268px");
+  elements.get("#pn-open-library").events.get("click")();
+  assert.equal(new URL(opened[0]).searchParams.get("tab"), "library");
+  assert.equal(menu.open, false);
+  for (const tab of ["words", "notes", "organize"]) {
+    menu.open = true; elements.get(`#pn-open-${tab}`).events.get("click")();
+    assert.equal(new URL(opened.at(-1)).searchParams.get("tab"), tab);
+    assert.equal(menu.open, false);
+  }
+  menu.open = true;
+  documentEvents.get("click")({ composedPath:() => [menu] }); assert.equal(menu.open, true);
+  documentEvents.get("click")({ composedPath:() => [] }); assert.equal(menu.open, false);
+  menu.open = true;
+  context.escape = { key:"Escape", preventDefault() {} };
+  vm.runInContext("handlePanelEscape(escape)", context);
+  assert.equal(menu.open, false); assert.equal(host.hidden, false); assert.equal(focusCount, 1);
+  vm.runInContext("handlePanelEscape(escape)", context); assert.equal(host.hidden, true);
+  settings.events.get("click")(); assert.equal(optionsCount, 1);
+  assert.equal(elements.get("#pn-note").value, "自分のメモ");
+  assert.equal(vm.runInContext("selectedPageText", context), "Keep going.");
 });
