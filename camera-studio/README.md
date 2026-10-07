@@ -47,3 +47,16 @@ AI処理はPC内で実行し、外部AI APIは使いません。初回モデル�
 加工エラー時の出力は黒い映像になります。AIの検出精度は実際の照明や姿勢で確認してください。
 
 参考: [MediaPipe](https://developers.google.com/edge/mediapipe/solutions/guide)、[pyvirtualcam](https://github.com/letmaik/pyvirtualcam)。
+
+## このPCでの補助設定
+
+既存のPython 3.14.7ではTcl/Tkスクリプトが不足していたため、公式パッケージからアプリ内の.runtimeに補っています。このPCでは設定済みです。同じ起動エラーが別環境で発生する場合は python setup_ui.py を実行してください。Python 3.14のWindows x64用です。
+
+## 検証
+
+~~~powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -c "import runpy; runpy.run_path('tests/ui_smoke.py', run_name='__main__')"
+~~~
+
+画像処理・保存失敗・四角形外の保持・モデル初期化の自動テストと、カメラを使わない画面操作テストを用意しています。Brio実機の認識精度、Discord受信側の映像と音声同期、通話中の遅延は実機確認が必要です。

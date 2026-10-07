@@ -1,3 +1,5 @@
+from studio.runtime import prepare
+prepare()
 import argparse
 import copy
 import queue
@@ -57,11 +59,13 @@ class App:
             ttk.Scale(controls, from_=lo, to=hi, variable=var, command=lambda v,n=name:self.set_value(n,float(v))).grid(row=row,column=1,sticky='ew',padx=10)
         controls.columnconfigure(1, weight=1)
         choices = ttk.Frame(root, padding=10); choices.pack(fill='x')
+        captions={'blur':'ぼかし','image':'画像置換','mosaic':'モザイク','gray':'白黒','glasses':'眼鏡','cartoon':'漫画風'}
         for name, label, options in [('background','背景',('blur','image')), ('region_effect','範囲加工',('mosaic','blur','gray')), ('face_effect','顔加工',('glasses','mosaic','cartoon'))]:
             ttk.Label(choices, text=label).pack(side='left',padx=5)
-            var = tk.StringVar(value=getattr(self.settings,name))
-            box = ttk.Combobox(choices, textvariable=var, values=options, state='readonly', width=10); box.pack(side='left')
-            box.bind('<<ComboboxSelected>>', lambda e,n=name,v=var:self.set_value(n,v.get()))
+            var = tk.StringVar(value=captions[getattr(self.settings,name)])
+            lookup={captions[key]:key for key in options}
+            box = ttk.Combobox(choices, textvariable=var, values=tuple(lookup), state='readonly', width=10); box.pack(side='left')
+            box.bind('<<ComboboxSelected>>', lambda e,n=name,v=var,m=lookup:self.set_value(n,m[v.get()]))
         ttk.Button(choices, text='背景画像を選ぶ', command=self.pick_background).pack(side='left',padx=5)
         self.freeze_button = ttk.Button(choices, text='範囲を固定', command=self.freeze); self.freeze_button.pack(side='left',padx=5)
         ttk.Label(root, textvariable=self.status, wraplength=1120, padding=10).pack(fill='x')
@@ -90,10 +94,13 @@ class App:
 
     def persist(self):
         try:
+            camera=self.camera.get()
+            if not 0<=camera<=10: raise ValueError('カメラ番号は0〜10にしてください。')
+            self.set_value('camera',camera)
             with self.lock:
                 save(self.settings)
             self.status.set('設定を保存しました。')
-        except OSError as e:
+        except (OSError, ValueError, tk.TclError) as e:
             messagebox.showerror('保存できません',str(e))
 
     def start(self):
@@ -113,7 +120,7 @@ class App:
         self.status.set('停止しています…')
 
     def process(self,index):
-        capture=None; engine=Engine(); output=None; seq=-1; last=time.perf_counter()
+        capture=None; engine=Engine(); output=None; seq=-1; last=time.perf_counter(); failure=None
         try:
             capture=Capture(index,self.demo)
             while not self.stop_event.is_set():
@@ -131,7 +138,7 @@ class App:
                     processed=raw*0; note='加工を利用できません（映像は黒にしています）：'+str(e)
                 if settings.mirror:
                     processed=cv2.flip(processed,1); raw=cv2.flip(raw,1)
-                # 仮想カメラ出力は専用モジュールで追加する
+                # 加工済みBGR映像を仮想カメラへ渡す
                 if settings.virtual:
                     try:
                         if output is None:
@@ -151,12 +158,15 @@ class App:
                 except queue.Empty: pass
                 self.preview.put_nowait(item)
         except Exception as e:
-            self.events.put(str(e))
+            failure=str(e)
         finally:
             if output: output.close()
             if capture: capture.close()
             engine.close()
+            try: self.preview.get_nowait()
+            except queue.Empty: pass
             self.events.put('stopped')
+            if failure: self.events.put(failure)
 
     def refresh(self):
         try:
@@ -164,6 +174,7 @@ class App:
                 event=self.events.get_nowait()
                 if event=='stopped':
                     self.start_button.configure(state='normal')
+                    self.status.set('停止しました。')
                 elif event=='virtual_off': self.virtual.set(False)
                 else: self.status.set(event)
         except queue.Empty: pass
