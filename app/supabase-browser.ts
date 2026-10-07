@@ -148,6 +148,20 @@ export async function updateVocabularyItem(id: string, changes: { meaning: strin
   return rows[0];
 }
 
+export async function appendVocabularyDetails(id: string, additions: { meaning: string; core_image: string; note: string }) {
+  const meaning = additions.meaning.trim(), coreImage = additions.core_image.trim(), note = additions.note.trim();
+  if (!id || (!meaning && !coreImage && !note)) throw new Error("追記する意味・コアイメージ・メモのいずれかを入力してください。");
+  try {
+    return await rest<VocabularyRow>("/rest/v1/rpc/append_vocabulary_details", {
+      method: "POST",
+      body: JSON.stringify({ p_vocabulary_id: id, p_meaning: meaning, p_core_image: coreImage, p_note: note }),
+    });
+  } catch (error) {
+    if (error instanceof Error && /PGRST202|Could not find the function/i.test(error.message)) throw new Error("追記機能の準備が必要です。Supabaseで0004_append_vocabulary_details.sqlを実行してください。入力内容は残しています。");
+    throw error;
+  }
+}
+
 export async function updateSentence(id: string, changes: { translation: string; note: string }) {
   const rows = await rest<SentenceRow[]>(`/rest/v1/sentences?id=eq.${encodeURIComponent(id)}&select=*`, {
     method: "PATCH",

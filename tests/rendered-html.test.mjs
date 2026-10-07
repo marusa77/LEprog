@@ -285,6 +285,56 @@ test("manual form renders editable inputs without invoking paid services", async
   assert.equal(serviceCalls, 0);
 });
 
+test("vocabulary additions use the append RPC, never a replacing PATCH or paid translation", async () => {
+  const helpers = await loadTypeScriptModule("../app/manual-entry-data.ts");
+  const values = new Map([
+    ["phrase-nest-web-config", JSON.stringify({ projectUrl:"https://example.supabase.co", publishableKey:"test-key" })],
+    ["phrase-nest-web-session", JSON.stringify({ access_token:"test-access", refresh_token:"test-refresh", expires_at:Math.floor(Date.now()/1000)+3600 })],
+  ]);
+  const calls = [];
+  let missingMigration = false;
+  const browser = await loadTypeScriptModule("../app/supabase-browser.ts", {
+    Error, require:() => helpers, window:{}, localStorage:{ getItem:key => values.get(key) || null },
+    fetch:async (url, init) => {
+      calls.push({ url, method:init.method, body:JSON.parse(init.body) });
+      return missingMigration ? new Response(JSON.stringify({ message:"Could not find the function public.append_vocabulary_details" }), { status:404 }) : new Response(JSON.stringify({ id:"word-id", core_image:"元の説明\n\n──────────\n【追記】\n\n追加の説明" }));
+    },
+  });
+  const row = await browser.appendVocabularyDetails("word-id", { meaning:"", core_image:" 追加の説明 ", note:"" });
+  assert.match(row.core_image, /元の説明[\s\S]*【追記】[\s\S]*追加の説明/);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/rest\/v1\/rpc\/append_vocabulary_details$/);
+  assert.equal(calls[0].method, "POST");
+  assert.equal(calls[0].body.p_vocabulary_id, "word-id");
+  assert.equal(calls[0].body.p_core_image, "追加の説明");
+  assert.equal(calls[0].body.p_meaning, "");
+  assert.deepEqual(Object.keys(calls[0].body).sort(), ["p_core_image", "p_meaning", "p_note", "p_vocabulary_id"]);
+  await assert.rejects(browser.appendVocabularyDetails("word-id", { meaning:" ", core_image:"", note:"" }), /追記する/);
+  assert.equal(calls.length, 1);
+  missingMigration = true;
+  await assert.rejects(browser.appendVocabularyDetails("word-id", { meaning:"", core_image:"追加", note:"" }), /0004_append_vocabulary_details.sql/);
+});
+
+test("append dialog starts empty and migration preserves old explanations with duplicate checks", async () => {
+  let services = 0;
+  const app = await loadTypeScriptModule("../app/learning-app.tsx", { require:name => name.startsWith(".") ? {} : nodeRequire(name) });
+  const html = renderToStaticMarkup(createElement(app.WordAppendDialog, { word:{ term:"draw" }, onClose() {}, onSave() { services++; } }));
+  assert.match(html, /draw に説明を追記/); assert.match(html, /追加のコアイメージ/);
+  assert.match(html, /追記を保存/); assert.match(html, /区切り線と【追記】/);
+  assert.match(html, /<textarea[^>]*><\/textarea>/); assert.equal(services, 0);
+  const migration = await readFile(new URL("../supabase/migrations/0004_append_vocabulary_details.sql", import.meta.url), "utf8");
+  assert.doesNotMatch(migration, /\b(drop|delete|truncate)\b/i);
+  assert.match(migration, /v_result := v_result \|\| v_separator \|\| v_block/);
+  assert.match(migration, /if not exists/);
+  assert.match(migration, /Duplicate check failed/); assert.match(migration, /Full-text check failed/);
+  assert.match(migration, /security invoker/);
+  assert.match(migration, /where id = p_vocabulary_id and user_id = v_user_id/);
+  assert.match(migration, /on conflict \(user_id, normalized_term\) do nothing/);
+  assert.match(migration, /'details_appending', true/);
+  const appendFunction = migration.slice(migration.indexOf("create or replace function public.append_vocabulary_details"), migration.indexOf("create or replace function public.save_capture"));
+  assert.doesNotMatch(appendFunction, /occurrence_count\s*=|status\s*=|next_review_at\s*=/);
+});
+
 test("manual form clears only successful saves, supports consecutive entries and protects the next draft", async () => {
   const hooks = [];
   let cursor = 0;

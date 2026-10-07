@@ -641,7 +641,7 @@ async function saveCapture() {
   savedCaptureSnapshot = submittedSnapshot;
   updateSaveState();
   const existingCount = response.result.terms?.filter((term) => term.existing).length || 0;
-  setPanelMessage(`保存しました。${existingCount ? `登録済みの語句 ${existingCount}件は登場回数を増やしました。` : ""}`);
+  setPanelMessage(`保存しました。${existingCount ? `登録済みの語句 ${existingCount}件は登場回数を増やしました。${response.result.details_appending ? "異なる意味・コアイメージ・メモは区切り線付きで追記しました。同じ説明は重ねて追加しません。" : "既存の説明は保持しています。追記を有効にするにはSupabaseで0004のSQLを実行してください。"}` : ""}`);
 }
 
 function setPanelMessage(text, error = false) { if (!phraseNestHost) return; const element = phraseNestHost.shadowRoot.querySelector("#pn-message"); element.textContent = text; element.classList.toggle("pn-error", error); }

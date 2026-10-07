@@ -87,7 +87,7 @@ export function ManualEntryView({ onSaved, onOpenLibrary, onTranslation }: { onS
 
   return <>
     <div className="page-heading"><div><p className="eyebrow">ADD YOUR ENGLISH</p><h1>入力して保存</h1><p>他サイトの英文や、日常で使いたい英語を登録できます。</p></div></div>
-    {lastSaved && <div className="manual-feedback" role="status"><span>直前の英文を保存しました。次の文を入力できます。{duplicateCount > 0 && `登録済みの語句 ${duplicateCount}件は登場回数を増やしました。既存の意味やメモは上書きしていません。`}</span><button className="plain-action" type="button" onClick={onOpenLibrary}>保存した英文を見る</button></div>}
+    {lastSaved && <div className="manual-feedback" role="status"><span>直前の英文を保存しました。次の文を入力できます。{duplicateCount > 0 && `登録済みの語句 ${duplicateCount}件は登場回数を増やしました。${lastSaved.details_appending ? "異なる意味・コアイメージ・メモは区切り線付きで追記しました。同じ説明は重ねて追加しません。" : "既存の説明は保持しています。追記を有効にするにはSupabaseで0004のSQLを実行してください。"}`}</span><button className="plain-action" type="button" onClick={onOpenLibrary}>保存した英文を見る</button></div>}
     <form className="manual-entry" onSubmit={save}>
       <fieldset disabled={Boolean(busy)} className="manual-fields">
         <div className="manual-language-grid">

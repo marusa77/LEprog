@@ -1,7 +1,7 @@
 export type ManualTerm = { term: string; meaning: string; core_image: string; note: string };
 export type ManualEntry = { english: string; japanese: string; note: string; origin: "daily" | "external"; sourceUrl: string; terms: ManualTerm[]; machineTranslation?: string | null };
 export type CapturePayload = { p_original_text: string; p_machine_translation: string | null; p_translation: string; p_note: string; p_source_url: string | null; p_source_title: string; p_subreddit: string | null; p_terms: ManualTerm[] };
-export type CaptureResult = { sentence_id: string; terms: Array<{ id: string; term: string; existing: boolean }> };
+export type CaptureResult = { sentence_id: string; terms: Array<{ id: string; term: string; existing: boolean }>; details_appending?: boolean };
 
 export function buildManualCapture(entry: ManualEntry): CapturePayload {
   const english = entry.english.trim();
