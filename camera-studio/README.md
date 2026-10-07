@@ -30,3 +30,20 @@ Ctrl+1〜5はこのアプリが選択されているときだけ反応します�
 
 feature/camera-foundation を起点に、feature/camera-studio を統合先として使います。
 各機能は専用ブランチでコミットし、統合先にマージします。既存のmainへはマージしません。
+
+## Discordへの出力
+
+OBS StudioのWindows版をインストールしてください。本アプリはpyvirtualcam経由でOBSの仮想カメラへ直接書き込むため、OBSで映像を取り込む操作は不要です。OBS側の「仮想カメラを開始」は使用せず、停止した状態にしてください。
+
+1. 初回に .\.venv\Scripts\python.exe setup_models.py を実行し、Googleの公式モデルを取得します。
+2. 本アプリで「開始」を押し、プレビューで映像を確認します。
+3. 「仮想カメラへ出力」にチェックを入れます。
+4. Discordの音声・ビデオ設定で OBS Virtual Camera を選びます。音声入力は普段のマイクを選びます。
+
+AI処理はPC内で実行し、外部AI APIは使いません。初回モデル取得時だけダウンロード通信を行います。
+背景のblurはぼかし、imageは画像への置換、範囲のmosaic/blur/grayはモザイク/ぼかし/白黒、顔のglasses/mosaic/cartoonは眼鏡/モザイク/漫画風です。
+背景画像はローカルのファイルパスだけを保存します。ファイルを移動した場合は選び直してください。
+指先が未検出なら範囲加工は行いません。固定は有効な四角形が見えているときに押してください。顔未検出の箇所にも顔加工は適用されません。
+加工エラー時の出力は黒い映像になります。AIの検出精度は実際の照明や姿勢で確認してください。
+
+参考: [MediaPipe](https://developers.google.com/edge/mediapipe/solutions/guide)、[pyvirtualcam](https://github.com/letmaik/pyvirtualcam)。
