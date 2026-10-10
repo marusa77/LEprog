@@ -9,6 +9,18 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const nodeRequire = createRequire(import.meta.url);
 
+test("calendar cells stay square and weekday labels track their responsive row height", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const buttonRule = css.match(/\.activity-week button\s*\{([^}]*)\}/)?.[1];
+  assert.match(buttonRule, /aspect-ratio:\s*1\s*\/\s*1/);
+  assert.match(buttonRule, /height:\s*auto/);
+  assert.match(buttonRule, /min-height:\s*0/);
+  assert.match(css, /\.activity-chart\s*\{[^}]*width:100%[^}]*max-width:300px/);
+  assert.match(css, /\.activity-weekdays\s*\{[^}]*grid-template-rows:18px repeat\(7,minmax\(0,1fr\)\)/);
+  assert.match(css, /\.activity-week\s*\{[^}]*grid-template-rows:18px repeat\(7,auto\)/);
+  assert.doesNotMatch(css, /grid-template-rows:18px repeat\(7,26px\)/);
+});
+
 test("learning activity uses Japanese midnight, Monday weeks and leap/year boundaries", async () => {
   const activity = await loadTypeScriptModule("../app/learning-activity.ts");
   assert.equal(activity.japanDateKey("2026-10-09T14:59:59Z"), "2026-10-09");
