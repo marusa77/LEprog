@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { appendVocabularyDetails, applyOrganizationResult, captureSessionFromUrl, consumeReturnTab, getStoredSession, getSupabaseConfiguration, loadLearningData, saveSupabaseConfiguration, signInWithGoogle, signOut, submitReview, updateSentence, updateVocabularyItem } from "./supabase-browser";
 import { buildOrganizationExport, countPendingOrganizationItems, exportPresets, OrganizationResult, OrganizationSuggestion, parseOrganizationResult } from "./organization";
 import { ManualEntryView } from "./manual-entry";
+import { ActivityCalendar } from "./activity-calendar";
 import { sentenceSourceLabel } from "./manual-entry-data";
 import { isSavedTab, primaryTab, resolveTab, savedTabStorageKey, type SavedTab, type Tab } from "./navigation";
 
@@ -39,6 +40,8 @@ export function LearningApp() {
   const [appendingWord, setAppendingWord] = useState<Word | null>(null);
   const [editingSentence, setEditingSentence] = useState<Sentence | null>(null);
   const [reloadVersion, setReloadVersion] = useState(0);
+  const [activityVersion, setActivityVersion] = useState(0);
+  const reviewSaving = useRef(false);
 
   useEffect(() => {
     try {
@@ -97,13 +100,16 @@ export function LearningApp() {
   });
 
   async function answerReview(result: "forgot" | "uncertain" | "remembered") {
-    if (!reviewWord) return;
+    if (!reviewWord || reviewSaving.current) return;
+    reviewSaving.current = true;
     try {
       const response = await submitReview(reviewWord.id, result);
       setWords((current) => current.map((word) => word.id === reviewWord.id ? { ...word, status: response.status, dueLabel: formatDueLabel(response.next_review_at) } : word));
       setCompleted((count) => count + 1);
       setRevealed(false);
+      setActivityVersion((version) => version + 1);
     } catch (error) { setConnectionError(error instanceof Error ? error.message : "復習結果を保存できませんでした"); }
+    finally { reviewSaving.current = false; }
   }
 
   async function saveWordEdit(changes: { meaning: string; core_image: string; note: string; status: LearningStatus }) {
@@ -165,7 +171,7 @@ export function LearningApp() {
           {(tab === "organize" || tab === "settings") && <button className="menu-back" type="button" onClick={() => selectTab("menu")}>メニューに戻る</button>}
           {tab !== "capture" && <>{(tab === "today" || isSavedTab(tab)) && <div className="library-search"><label htmlFor="library-search">保存内容をまとめて検索</label><div><input id="library-search" type="search" placeholder="語句・英文・コアイメージ・メモ" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />{searchQuery && <button type="button" onClick={() => setSearchQuery("")}>検索を閉じる</button>}</div></div>}
           {searchQuery.trim() ? <SearchView words={words} sentences={sentenceItems} query={searchQuery} onEditWord={setEditingWord} onEditSentence={setEditingSentence} /> : <>
-            {tab === "today" && <TodayView words={words} reviewWord={reviewWord} revealed={revealed} completed={completed} remaining={reviewQueue.length} onReveal={() => setRevealed(true)} onAnswer={answerReview} />}
+            {tab === "today" && <><ActivityCalendar refreshVersion={reloadVersion + activityVersion} /><TodayView words={words} reviewWord={reviewWord} revealed={revealed} completed={completed} remaining={reviewQueue.length} onReveal={() => setRevealed(true)} onAnswer={answerReview} /></>}
             {tab === "words" && <WordsView words={filteredWords} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onEdit={setEditingWord} onAppend={setAppendingWord} />}
             {tab === "sentences" && <SentencesView sentences={sentenceItems} onEdit={setEditingSentence} />}
             {tab === "notes" && <NotesView words={words} sentences={sentenceItems} onEditWord={setEditingWord} onEditSentence={setEditingSentence} />}

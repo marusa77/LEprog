@@ -9,6 +9,110 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const nodeRequire = createRequire(import.meta.url);
 
+test("learning activity uses Japanese midnight, Monday weeks and leap/year boundaries", async () => {
+  const activity = await loadTypeScriptModule("../app/learning-activity.ts");
+  assert.equal(activity.japanDateKey("2026-10-09T14:59:59Z"), "2026-10-09");
+  assert.equal(activity.japanDateKey("2026-10-09T15:00:00Z"), "2026-10-10");
+  assert.equal(activity.japanDateKey("invalid"), "");
+  assert.equal(activity.shiftDateKey("2024-03-01", -1), "2024-02-29");
+  assert.equal(activity.shiftDateKey("2026-01-01", -1), "2025-12-31");
+  const range = activity.activityRange("2026-10-10");
+  assert.equal(range.start, "2026-08-17");
+  assert.equal(range.end, "2026-10-12");
+  assert.equal(range.from, "2026-08-16T15:00:00.000Z");
+  assert.equal(range.until, "2026-10-10T15:00:00.000Z");
+  for (const today of ["2026-10-05", "2026-10-11", "2026-01-01"]) {
+    const days = activity.buildActivityDays(today, [], []);
+    assert.equal(days.length, 56);
+    assert.equal(new Date(`${days[0].date}T00:00:00Z`).getUTCDay(), 1);
+    assert.equal(days.filter(day => day.date === today).length, 1);
+  }
+});
+
+test("activity counts saves once and reviews once per word per Japan day including forgotten answers", async () => {
+  const activity = await loadTypeScriptModule("../app/learning-activity.ts");
+  const sentences = [{ id:"s1", created_at:"2026-10-09T16:00:00Z", terms:Array(10).fill("word") }, { id:"s1", created_at:"2026-10-09T16:00:00Z" }, { id:"s2", created_at:"2026-10-10T03:00:00Z" }, { id:"bad", created_at:"bad" }, { id:"future", created_at:"2026-10-11T03:00:00Z" }];
+  const reviews = [{ vocabulary_id:"w1", reviewed_at:"2026-10-09T14:59:59Z", result:"forgot" }, { vocabulary_id:"w1", reviewed_at:"2026-10-09T15:00:00Z", result:"forgot" }, { vocabulary_id:"w1", reviewed_at:"2026-10-10T01:00:00Z", result:"remembered" }, { vocabulary_id:"w2", reviewed_at:"2026-10-10T02:00:00Z", result:"uncertain" }];
+  const days = activity.buildActivityDays("2026-10-10", sentences, reviews);
+  const today = days.find(day => day.date === "2026-10-10");
+  assert.equal(today.saves, 2); assert.equal(today.reviews, 2); assert.equal(today.total, 4); assert.equal(today.level, 2);
+  assert.equal(days.find(day => day.date === "2026-10-09").reviews, 1);
+  assert.equal(days.find(day => day.date === "2026-10-11").total, 0);
+  assert.equal(days.find(day => day.date === "2026-10-11").future, true);
+  assert.match(activity.activityDayLabel(today), /英文の保存 2件・復習 2語/);
+  for (const [count, level] of [[0,0],[1,1],[2,2],[4,2],[5,3],[9,3],[10,4],[1000,4]]) assert.equal(activity.activityLevel(count), level);
+});
+
+test("calendar reads only ranged IDs/timestamps, pages all reviews, uses authentication and never writes or translates", async () => {
+  const activity = await loadTypeScriptModule("../app/learning-activity.ts");
+  const helpers = await loadTypeScriptModule("../app/manual-entry-data.ts");
+  const values = new Map([
+    ["phrase-nest-web-config", JSON.stringify({ projectUrl:"https://example.supabase.co", publishableKey:"test-key" })],
+    ["phrase-nest-web-session", JSON.stringify({ access_token:"test-access", refresh_token:"test-refresh", expires_at:Math.floor(Date.now()/1000)+3600 })],
+  ]);
+  const calls = [];
+  const browser = await loadTypeScriptModule("../app/supabase-browser.ts", {
+    require:name => name === "./learning-activity" ? activity : helpers, window:{}, localStorage:{ getItem:key => values.get(key) || null },
+    fetch:async (url, init) => {
+      const parsed = new URL(url); calls.push({ parsed, init });
+      if (parsed.pathname.endsWith("sentences")) return new Response(JSON.stringify([{ id:"saved", created_at:"2026-10-09T16:00:00Z" }]));
+      const offset = Number(parsed.searchParams.get("offset"));
+      return new Response(JSON.stringify(Array.from({ length:offset < 1000 ? 500 : 1 }, (_, index) => ({ vocabulary_id:`w${offset + index}`, reviewed_at:"2026-10-09T16:00:00Z" }))));
+    },
+  });
+  const data = await browser.loadLearningActivity("2026-10-10");
+  assert.equal(data.sentences.length, 1); assert.equal(data.reviews.length, 1001); assert.equal(calls.length, 4);
+  assert.equal(activity.buildActivityDays("2026-10-10", data.sentences, data.reviews).find(day => day.date === "2026-10-10").reviews, 1001);
+  for (const { parsed, init } of calls) {
+    assert.equal(init.method, undefined); assert.equal(init.headers.Authorization, "Bearer test-access");
+    assert.doesNotMatch(parsed.pathname, /functions|rpc/);
+    const timestamp = parsed.pathname.endsWith("sentences") ? "created_at" : "reviewed_at";
+    assert.equal(parsed.searchParams.getAll(timestamp)[0], "gte.2026-08-16T15:00:00.000Z");
+    assert.equal(parsed.searchParams.getAll(timestamp)[1], "lt.2026-10-10T15:00:00.000Z");
+    assert.equal(parsed.searchParams.get("select"), timestamp === "created_at" ? "id,created_at" : "vocabulary_id,reviewed_at");
+  }
+});
+
+test("calendar renders selectable days, handles failure/retry and refreshes after saves/reviews and returning to the page", async () => {
+  const activity = await loadTypeScriptModule("../app/learning-activity.ts");
+  const hooks = []; let cursor = 0; let effects = []; let requests = [];
+  const events = new Map(); const intervals = new Map();
+  const fakeReact = {
+    useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = typeof initial === "function" ? initial() : initial; return [hooks[slot], value => { hooks[slot] = typeof value === "function" ? value(hooks[slot]) : value; }]; },
+    useMemo(callback) { return callback(); },
+    useEffect(callback, deps) { const slot = cursor++; const old = hooks[slot]; if (!old || deps.some((value, index) => !Object.is(value, old.deps[index]))) effects.push(() => { old?.cleanup?.(); hooks[slot] = { deps, cleanup:callback() }; }); },
+  };
+  const module = await loadTypeScriptModule("../app/activity-calendar.tsx", {
+    window:{ setInterval(callback) { intervals.set(1, callback); return 1; }, clearInterval:id => intervals.delete(id), addEventListener:(name, callback) => events.set(name, callback), removeEventListener:name => events.delete(name) },
+    document:{ visibilityState:"visible", addEventListener:(name, callback) => events.set(name, callback), removeEventListener:name => events.delete(name) },
+    require:name => name === "react" ? fakeReact : name === "./learning-activity" ? activity : name === "./supabase-browser" ? { loadLearningActivity(today) { return new Promise((resolve, reject) => requests.push({ today, resolve, reject })); } } : nodeRequire(name),
+  });
+  function render(version = 0) { cursor = 0; effects = []; const tree = module.ActivityCalendar({ refreshVersion:version }); effects.forEach(effect => effect()); return tree; }
+  function nodes(node) { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== "object") return []; return [node, ...nodes(node.props?.children)]; }
+  let tree = render();
+  assert.match(renderToStaticMarkup(tree), /学習記録を読み込んでいます/);
+  const today = requests[0].today;
+  const data = { sentences:[{ id:"s", created_at:`${today}T10:00:00+09:00` }], reviews:[{ vocabulary_id:"w", reviewed_at:`${today}T11:00:00+09:00` }] };
+  requests[0].resolve(data); await Promise.resolve(); tree = render();
+  let html = renderToStaticMarkup(tree);
+  assert.equal((html.match(/<button /g) || []).length, 56);
+  assert.match(html, /aria-current="date"/); assert.match(html, /英文の保存 1件・復習 1語/); assert.match(html, /何が記録される/);
+  const past = nodes(tree).find(node => node.type === "button" && !node.props.disabled && node.props["aria-label"].includes("英文の保存 0件"));
+  past.props.onClick(); tree = render();
+  assert.match(renderToStaticMarkup(tree), /aria-pressed="true"/);
+  render(1); assert.equal(requests.length, 2); tree = render(1);
+  assert.match(renderToStaticMarkup(tree), /activity-weeks/); // Keep the grid while refreshing after a review.
+  requests[1].reject(new Error("temporary failure")); await Promise.resolve(); await Promise.resolve(); tree = render(1);
+  html = renderToStaticMarkup(tree); assert.match(html, /保存・復習はそのまま使えます/);
+  nodes(tree).find(node => node.type === "button" && node.props.children === "再読み込み").props.onClick(); render(1);
+  assert.equal(requests.length, 3);
+  requests[2].resolve(data); await Promise.resolve(); render(1);
+  events.get("focus")(); render(1); assert.equal(requests.length, 4);
+  requests[3].resolve(data); await Promise.resolve(); render(1);
+  events.get("visibilitychange")(); render(1); assert.equal(requests.length, 5);
+  intervals.get(1)(); render(1); assert.equal(requests.length, 5); // No repeated reads just for the clock.
+});
+
 async function loadTypeScriptModule(relativePath, globals = {}) {
   const source = await readFile(new URL(relativePath, import.meta.url), "utf8");
   const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX } }).outputText;

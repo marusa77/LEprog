@@ -1,4 +1,5 @@
 import { buildManualCapture, type CaptureResult, type ManualEntry } from "./manual-entry-data";
+import { activityRange, type ActivitySentence, type ActivityReview } from "./learning-activity";
 
 export type BrowserSession = { access_token: string; refresh_token: string; expires_at: number; user?: { email?: string } };
 export type VocabularyRow = { id: string; term: string; meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered"; occurrence_count: number; next_review_at: string; created_at: string; updated_at: string; organization_checked_at: string | null };
@@ -121,6 +122,15 @@ export async function loadLearningData() {
 
 export async function submitReview(id: string, result: "forgot" | "uncertain" | "remembered") {
   return rest<{ status: "unlearned" | "learning" | "mastered"; next_review_at: string; interval_days: number }>("/rest/v1/rpc/record_review", { method: "POST", body: JSON.stringify({ p_vocabulary_id: id, p_result: result }) });
+}
+
+export async function loadLearningActivity(today: string) {
+  const range = activityRange(today);
+  // Read only timestamps/IDs in the visible range, through the existing user-specific policies.
+  // Sequential requests also avoid introducing parallel login refreshes here.
+  const sentences = await restPaged<ActivitySentence>(`/rest/v1/sentences?select=id,created_at&created_at=gte.${encodeURIComponent(range.from)}&created_at=lt.${encodeURIComponent(range.until)}&order=created_at.asc,id.asc`);
+  const reviews = await restPaged<ActivityReview>(`/rest/v1/review_logs?select=vocabulary_id,reviewed_at&reviewed_at=gte.${encodeURIComponent(range.from)}&reviewed_at=lt.${encodeURIComponent(range.until)}&order=reviewed_at.asc,id.asc`);
+  return { sentences, reviews };
 }
 
 export async function saveManualEntry(entry: ManualEntry) {
