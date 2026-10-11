@@ -1,11 +1,11 @@
 {
   "manifest_version": 3,
-  "name": "PhraseNest - Reddit English Notes",
-  "version": "0.9.2",
-  "description": "Redditで選択した英文をその場で翻訳し、単語・熟語と一緒に保存します。",
+  "name": "PhraseNest - English Notes",
+  "version": "0.9.3",
+  "description": "呼び出したページで選択した英文を翻訳し、単語・熟語と一緒に保存します。",
   "minimum_chrome_version": "138",
-  "permissions": ["storage", "identity", "activeTab"],
-  "host_permissions": ["https://*.reddit.com/*", "https://*.supabase.co/*"],
+  "permissions": ["storage", "identity", "activeTab", "scripting"],
+  "host_permissions": ["https://*.supabase.co/*"],
   "background": { "service_worker": "service-worker.js", "type": "module" },
   "action": { "default_title": "PhraseNestを開く", "default_popup": "launcher.html" },
   "options_page": "options.html",
@@ -15,6 +15,5 @@
       "description": "選択した英文を翻訳する"
     }
   },
-  "content_scripts": [{ "matches": ["https://*.reddit.com/*"], "js": ["common-expressions.js", "conversation-patterns.js", "content-script.js"], "run_at": "document_idle" }],
-  "web_accessible_resources": [{ "resources": ["panel.css"], "matches": ["https://*.reddit.com/*"] }]
+  "web_accessible_resources": [{ "resources": ["panel.css"], "matches": ["https://*/*", "http://*/*"] }]
 }

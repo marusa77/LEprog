@@ -1,5 +1,6 @@
 import { buildManualCapture, type CaptureResult, type ManualEntry } from "./manual-entry-data";
 import { activityRange, type ActivitySentence, type ActivityReview } from "./learning-activity";
+import { buildWritingCapture, type WritingEntry } from "./writing-practice-data";
 
 export type BrowserSession = { access_token: string; refresh_token: string; expires_at: number; user?: { email?: string } };
 export type VocabularyRow = { id: string; term: string; meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered"; occurrence_count: number; next_review_at: string; created_at: string; updated_at: string; organization_checked_at: string | null };
@@ -136,6 +137,18 @@ export async function loadLearningActivity(today: string) {
 export async function saveManualEntry(entry: ManualEntry) {
   const payload = buildManualCapture(entry);
   return rest<CaptureResult>("/rest/v1/rpc/save_capture", { method: "POST", body: JSON.stringify(payload) });
+}
+
+export async function saveWritingEntry(entry: WritingEntry, sentenceId: string | null = null): Promise<CaptureResult> {
+  const payload = buildWritingCapture(entry);
+  if (!sentenceId) return rest<CaptureResult>("/rest/v1/rpc/save_capture", { method: "POST", body: JSON.stringify(payload) });
+  // Keep the original composition and vocabulary untouched when adding feedback later.
+  const rows = await rest<SentenceRow[]>(`/rest/v1/sentences?id=eq.${encodeURIComponent(sentenceId)}&source_title=eq.${encodeURIComponent("英作文")}&select=id`, {
+    method: "PATCH", headers: { Prefer: "return=representation" },
+    body: JSON.stringify({ translation: payload.p_translation, note: payload.p_note, updated_at: new Date().toISOString() }),
+  });
+  if (!rows[0]?.id) throw new Error("英作文を更新できませんでした。入力内容は残しています。");
+  return { sentence_id: rows[0].id, terms: [] };
 }
 
 export async function translateManualText(text: string, source: "en" | "ja", target: "en" | "ja") {

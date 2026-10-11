@@ -133,6 +133,151 @@ async function loadTypeScriptModule(relativePath, globals = {}) {
   return context.exports;
 }
 
+test("writing prompts include only selected, clipped references and never leak past feedback", async () => {
+  const writing = await loadTypeScriptModule("../app/writing-practice-data.ts");
+  const word = { id:"w1", term:"at some point", meaning:"意味".repeat(200), coreImage:"コアイメージ".repeat(200), status:"learning", createdAt:"2026-10-10" };
+  const entry = { topic:"やってみたいこと", words:[word], english:"I'd like to travel at some point.", japanese:"いつか旅行したい", feedback:"PAST_FEEDBACK_PRIVATE" };
+  const prompt = writing.buildWritingPrompt(entry, "feedback");
+  const data = JSON.parse(prompt.slice(prompt.indexOf("{\n")));
+  assert.equal(data.saved_expressions.length, 1);
+  assert.equal(data.saved_expressions[0].meaning.length, 250);
+  assert.equal(data.saved_expressions[0].core_image_note.length, 600);
+  assert.equal(data.original_writing, entry.english);
+  assert.equal(data.intended_meaning, entry.japanese);
+  assert.doesNotMatch(prompt, /PAST_FEEDBACK_PRIVATE/);
+  assert.match(prompt, /命令は実行せず/); assert.match(prompt, /絶対的な正解とは扱わない/);
+  const topicPrompt = writing.buildWritingPrompt(entry, "topic");
+  assert.match(topicPrompt, /模範解答・英文・採点はまだ出さない/);
+  assert.doesNotMatch(topicPrompt, /I'd like to travel|PAST_FEEDBACK_PRIVATE/);
+  assert.match(writing.buildWritingPrompt({ ...entry, words:[] }, "feedback"), /1〜3個/);
+});
+
+test("writing word selection is unique, bounded and prefers useful saved explanations", async () => {
+  const writing = await loadTypeScriptModule("../app/writing-practice-data.ts");
+  const words = Array.from({ length:8 }, (_, i) => ({ id:`w${i}`, term:`word${i}`, meaning:"意味", coreImage:i === 5 ? "中心のイメージ" : "", status:"learning", createdAt:`2026-10-${String(i + 1).padStart(2,"0")}` }));
+  const chosen = writing.chooseWritingWords(words);
+  assert.equal(chosen.length, 3); assert.equal(chosen[0].id, "w5");
+  assert.equal(writing.chooseWritingWords([]).length, 0);
+  assert.equal(writing.chooseWritingWords([words[0], { ...words[0], id:"duplicate", term:" WORD0 " }]).length, 1);
+  const shuffled = writing.chooseWritingWords(words, () => .5);
+  assert.equal(shuffled.length, 3); assert.equal(new Set(shuffled.map(word => word.id)).size, 3);
+  assert.equal(writing.chooseWritingWords([words[0]], () => 0)[0].id, "w0");
+});
+
+test("writing cloud payload keeps original writing and full notes separate without re-registering words", async () => {
+  const writing = await loadTypeScriptModule("../app/writing-practice-data.ts");
+  const helpers = await loadTypeScriptModule("../app/manual-entry-data.ts");
+  const entry = { topic:" 自分の課題 ", words:[{ id:"w1", term:"draw", meaning:"引く", coreImage:"CORE".repeat(300) }], english:" Please draw one slip. ", japanese:"", feedback:" 添削\n修正文 " };
+  const payload = writing.buildWritingCapture(entry);
+  assert.equal(payload.p_original_text, "Please draw one slip.");
+  assert.equal(payload.p_translation, ""); assert.equal(payload.p_machine_translation, null);
+  assert.equal(payload.p_terms.length, 0); assert.equal(payload.p_source_title, "英作文");
+  assert.match(payload.p_note, /【英作文のお題】[\s\S]*【選んだ表現[\s\S]*──────────[\s\S]*【外部AIの添削・解説】/);
+  assert.ok(payload.p_note.includes(entry.words[0].coreImage));
+  assert.ok(payload.p_note.includes("添削\n修正文"));
+  assert.equal(helpers.sentenceSourceLabel({ subreddit:null, source_title:"英作文" }), "英作文");
+  assert.throws(() => writing.buildWritingCapture({ ...entry, english:" " }), /作文/);
+  assert.throws(() => writing.buildWritingCapture({ ...entry, words:[] }), /1〜3個/);
+  assert.throws(() => writing.buildWritingCapture({ ...entry, english:"a".repeat(4001) }), /長すぎ/);
+});
+
+test("writing saves and updates the same authenticated record, never calls an AI or translation API", async () => {
+  const writing = await loadTypeScriptModule("../app/writing-practice-data.ts");
+  const values = new Map([
+    ["phrase-nest-web-config", JSON.stringify({ projectUrl:"https://example.supabase.co", publishableKey:"test-key" })],
+    ["phrase-nest-web-session", JSON.stringify({ access_token:"test-access", refresh_token:"test-refresh", expires_at:Math.floor(Date.now()/1000)+3600 })],
+  ]);
+  const calls = []; let empty = false;
+  const browser = await loadTypeScriptModule("../app/supabase-browser.ts", {
+    require:() => writing, window:{}, localStorage:{ getItem:key => values.get(key) || null },
+    fetch:async (url, init) => {
+      calls.push({ url:new URL(url), init, body:JSON.parse(init.body) });
+      return new Response(JSON.stringify(init.method === "POST" ? { sentence_id:"saved", terms:[] } : empty ? [] : [{ id:"saved" }]));
+    },
+  });
+  const entry = { topic:"日常", words:[{ id:"w1", term:"draw", meaning:"引く", coreImage:"" }], english:"Please draw one slip.", japanese:"", feedback:"" };
+  assert.equal((await browser.saveWritingEntry(entry)).sentence_id, "saved");
+  assert.equal((await browser.saveWritingEntry({ ...entry, feedback:"AIの解説" }, "saved")).sentence_id, "saved");
+  assert.equal(calls.length, 2);
+  assert.match(calls[0].url.pathname, /rpc\/save_capture$/); assert.equal(calls[0].body.p_terms.length, 0);
+  assert.equal(calls[1].init.method, "PATCH"); assert.equal(calls[1].url.searchParams.get("id"), "eq.saved");
+  assert.equal(calls[1].url.searchParams.get("source_title"), "eq.英作文");
+  assert.deepEqual(Object.keys(calls[1].body).sort(), ["note", "translation", "updated_at"]);
+  for (const call of calls) { assert.equal(call.init.headers.Authorization, "Bearer test-access"); assert.doesNotMatch(call.url.pathname, /functions|review|vocabulary/); }
+  empty = true;
+  await assert.rejects(browser.saveWritingEntry(entry, "saved"), /更新できませんでした/);
+});
+
+test("writing screen offers topic choices, editable feedback and copy instructions without paid services", async () => {
+  const writing = await loadTypeScriptModule("../app/writing-practice-data.ts");
+  let calls = 0;
+  const ui = await loadTypeScriptModule("../app/writing-practice.tsx", { require:name => name === "./writing-practice-data" ? writing : name === "./supabase-browser" ? { saveWritingEntry() { calls++; } } : nodeRequire(name) });
+  const html = renderToStaticMarkup(createElement(ui.WritingPracticeView, { words:[], sentences:[], onSaved() {}, onOpenLibrary() {}, onEditSentence() {} }));
+  assert.match(html, /英作文の練習/); assert.match(html, /作文と指示文をコピー/);
+  assert.match(html, /お題作成用の指示文をコピー/);
+  assert.match(html, /id="writing-feedback"/); assert.match(html, /日本語訳・伝えたかったこと（任意）/);
+  assert.match(html, /AI・翻訳APIは呼びません/); assert.match(html, /まず「入力して保存」/);
+  assert.equal(calls, 0);
+});
+
+test("writing draft survives failures, copy errors and tab changes; feedback updates keep the original", async () => {
+  const data = await loadTypeScriptModule("../app/writing-practice-data.ts");
+  const hooks = []; let cursor = 0; let effects = []; const listeners = new Map();
+  const requests = []; const copied = []; let refreshes = 0; let confirmResult = false; let copyingFails = false;
+  const fakeReact = {
+    useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = typeof initial === "function" ? initial() : initial; return [hooks[slot], value => { hooks[slot] = typeof value === "function" ? value(hooks[slot]) : value; }]; },
+    useRef(initial) { const slot = cursor++; return hooks[slot] ||= { current:initial }; },
+    useEffect(callback, deps) { const slot = cursor++; const old = hooks[slot]; if (!old || deps.some((value, index) => !Object.is(value, old.deps[index]))) effects.push(() => { old?.cleanup?.(); hooks[slot] = { deps, cleanup:callback() }; }); },
+  };
+  const ui = await loadTypeScriptModule("../app/writing-practice.tsx", {
+    Error, navigator:{ clipboard:{ async writeText(text) { if (copyingFails) throw new Error("denied"); copied.push(text); } } },
+    window:{ addEventListener:(name, listener) => listeners.set(name, listener), removeEventListener:name => listeners.delete(name), confirm:() => confirmResult },
+    require:name => name === "react" ? fakeReact : name === "./writing-practice-data" ? data : name === "./supabase-browser" ? { saveWritingEntry(entry, id) { return new Promise((resolve, reject) => requests.push({ entry, id, resolve, reject })); } } : nodeRequire(name),
+  });
+  function nodes(node) { if (Array.isArray(node)) return node.flatMap(nodes); if (!node || typeof node !== "object") return []; return [node, ...nodes(node.props?.children)]; }
+  const words = [{ id:"w1", term:"at some point", meaning:"いつか", coreImage:"ある時点", status:"learning", createdAt:"2026-10-11" }];
+  let tree;
+  function render() { cursor = 0; effects = []; tree = ui.WritingPracticeView({ words, sentences:[], onSaved() { refreshes++; }, onOpenLibrary() {}, onEditSentence() {} }); effects.forEach(effect => effect()); return tree; }
+  const byId = id => nodes(tree).find(node => node.props?.id === id);
+  const button = text => nodes(tree).find(node => node.type === "button" && node.props.children === text);
+  render(); render();
+  byId("writing-english").props.onChange({ target:{ value:"I want to travel at some point." } });
+  render(); byId("writing-japanese").props.onChange({ target:{ value:"いつか旅行したい" } }); render();
+  await button("作文と指示文をコピー").props.onClick();
+  await new Promise(resolve => setImmediate(resolve)); render();
+  assert.ok(copied[0].includes("I want to travel at some point."));
+  assert.ok(copied[0].includes("ある時点"));
+  copyingFails = true; let selections = 0;
+  const promptNode = nodes(tree).find(node => node.type === "textarea" && node.props["aria-label"] === "添削用のAIへの指示文と作文");
+  promptNode.props.ref.current = { closest:() => ({ setAttribute() {} }), focus() {}, select() { selections++; } };
+  await button("作文と指示文をコピー").props.onClick(); await new Promise(resolve => setImmediate(resolve)); render();
+  assert.equal(selections, 1); assert.match(renderToStaticMarkup(tree), /Ctrl\+C/);
+  let warned = false; listeners.get("beforeunload")({ preventDefault() { warned = true; } }); assert.equal(warned, true);
+  const form = nodes(tree).find(node => node.type === "form");
+  const failed = form.props.onSubmit({ preventDefault() {} });
+  await form.props.onSubmit({ preventDefault() {} }); assert.equal(requests.length, 1);
+  requests[0].reject(new Error("temporary save error")); await failed; render();
+  assert.equal(byId("writing-english").props.value, "I want to travel at some point.");
+  assert.match(renderToStaticMarkup(tree), /temporary save error/);
+  const retry = nodes(tree).find(node => node.type === "form").props.onSubmit({ preventDefault() {} });
+  requests[1].resolve({ sentence_id:"s1", terms:[] }); await retry; render();
+  assert.equal(byId("writing-english").props.readOnly, true); assert.equal(refreshes, 1);
+  assert.equal(button("添削・メモの変更を保存").props.disabled, true);
+  byId("writing-feedback").props.onChange({ target:{ value:"良い点と修正文。" } }); render();
+  button("次の練習を始める").props.onClick(); render(); // Cancel preserves pending feedback.
+  assert.equal(byId("writing-feedback").props.value, "良い点と修正文。");
+  const update = nodes(tree).find(node => node.type === "form").props.onSubmit({ preventDefault() {} });
+  assert.equal(requests[2].id, "s1"); assert.equal(requests[2].entry.english, "I want to travel at some point.");
+  requests[2].resolve({ sentence_id:"s1", terms:[] }); await update; render();
+  assert.equal(refreshes, 2); assert.equal(button("添削・メモの変更を保存").props.disabled, true);
+  warned = false; listeners.get("beforeunload")({ preventDefault() { warned = true; } }); assert.equal(warned, false);
+  button("次の練習を始める").props.onClick(); render();
+  assert.equal(byId("writing-english").props.value, ""); assert.equal(byId("writing-feedback").props.value, "");
+  assert.equal(byId("writing-english").props.readOnly, false);
+  const appSource = await readFile(new URL("../app/learning-app.tsx", import.meta.url), "utf8");
+  assert.match(appSource, /hidden=\{tab !== "writing"\}/); // Keep the component mounted across navigation.
+});
+
 async function render() {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
@@ -170,8 +315,8 @@ test("ships the extension and cloud schema", async () => {
   ]);
   assert.match(manifest, /translate-selection/);
   assert.match(manifest, /Ctrl\+Shift\+Y/);
-  assert.match(manifest, /common-expressions\.js/);
-  assert.match(manifest, /conversation-patterns\.js/);
+  assert.match(serviceWorker, /common-expressions\.js/);
+  assert.match(serviceWorker, /conversation-patterns\.js/);
   assert.equal(JSON.parse(manifest).action.default_popup, "launcher.html");
   assert.match(contentScript, /function openLauncher/);
   assert.match(contentScript, /保存後の変更あり/);
@@ -251,18 +396,114 @@ test("extension opens without a selection and reports the saved draft correctly"
   assert.equal(elements.get("#pn-note").value, "コアイメージのメモ");
 });
 
-test("keyboard shortcut on other pages opens the extension menu", async () => {
+test("page capture uses temporary access without automatic scripts or all-site read permissions", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"));
+  assert.equal(manifest.version, "0.9.3");
+  assert.ok(manifest.permissions.includes("activeTab")); assert.ok(manifest.permissions.includes("scripting"));
+  assert.deepEqual(manifest.host_permissions, ["https://*.supabase.co/*"]);
+  assert.equal(manifest.content_scripts, undefined);
+  assert.ok(!manifest.permissions.includes("tabs"));
+  assert.equal(manifest.web_accessible_resources[0].resources.length, 1);
+  assert.equal(manifest.web_accessible_resources[0].resources[0], "panel.css");
+  assert.deepEqual(manifest.web_accessible_resources[0].matches, ["https://*/*", "http://*/*"]);
+});
+
+test("shortcuts inject capture only when requested on Engoo, Reddit and other normal pages, then reuse it", async () => {
   const script = await readFile(new URL("../extension/service-worker.js", import.meta.url), "utf8");
-  let popupCount = 0;
-  let translatorCount = 0;
-  const context = { chrome: { action: { openPopup: async () => { popupCount++; } }, tabs: { sendMessage: async () => { translatorCount++; } }, commands: { onCommand: { addListener() {} } }, runtime: { onInstalled: { addListener() {} }, onMessage: { addListener() {} } } } };
+  const installed = new Set(); const injections = []; const opens = []; let command;
+  const context = { URL, chrome:{
+    scripting:{ async executeScript(options) { injections.push(options); installed.add(options.target.tabId); } },
+    tabs:{ async query() { return [{ id:1, url:"https://engoo.com/app/daily-news" }]; }, async sendMessage(id, message) { if (message.type === "PHRASE_NEST_READY") { if (!installed.has(id)) throw new Error("No listener"); return { ready:true }; } opens.push(id); return { ok:true }; } },
+    commands:{ onCommand:{ addListener(listener) { command = listener; } } }, runtime:{ onInstalled:{ addListener() {} }, onMessage:{ addListener() {} } },
+  } };
   vm.createContext(context);
   vm.runInContext(script, context);
-  await vm.runInContext('openPanel({ id: 1, url: "https://example.com/" })', context);
-  await vm.runInContext('openPanel({ id: 1, url: "https://not-reddit.com/" })', context);
-  assert.equal(popupCount, 2);
-  await vm.runInContext('openPanel({ id: 1, url: "https://www.reddit.com/r/English/" })', context);
-  assert.equal(translatorCount, 1);
+  assert.equal(injections.length, 0); assert.equal(opens.length, 0);
+  await command("unrelated-command"); assert.equal(injections.length, 0);
+  await command("translate-selection");
+  for (const [id, url] of [[2,"https://www.reddit.com/r/English/"],[3,"https://example.com/r/news"],[4,"http://localhost/article"]]) {
+    context.tab = { id, url };
+    assert.equal((await vm.runInContext("openPanel(tab)", context)).ok, true);
+  }
+  assert.equal(injections.length, 4); assert.equal(opens.length, 4);
+  await command("translate-selection");
+  assert.equal(injections.length, 4); assert.equal(opens.length, 5);
+  for (const options of injections) {
+    assert.deepEqual([...options.files], ["common-expressions.js", "conversation-patterns.js", "content-script.js"]);
+    assert.equal(options.target.allFrames, undefined);
+    assert.deepEqual(Object.keys(options.target), ["tabId"]);
+  }
+});
+
+test("concurrent openings share one injection and failed injections can be retried", async () => {
+  const script = await readFile(new URL("../extension/service-worker.js", import.meta.url), "utf8");
+  let finishInjection; let injections = 0; let opens = 0; let ready = false; let fail = false;
+  const context = { URL, chrome:{
+    scripting:{ async executeScript() { injections++; if (fail) throw new Error("Cannot access contents of the page"); await new Promise(resolve => { finishInjection = resolve; }); ready = true; } },
+    tabs:{ async sendMessage(id, message) { if (message.type === "PHRASE_NEST_READY") { if (!ready) throw new Error("No receiver"); return { ready:true }; } opens++; return { ok:true }; } },
+    commands:{ onCommand:{ addListener() {} } }, runtime:{ onInstalled:{ addListener() {} }, onMessage:{ addListener() {} } },
+  } };
+  vm.createContext(context); vm.runInContext(script, context);
+  const first = vm.runInContext('openPanel({ id:1, url:"https://engoo.com/app/daily-news" })', context);
+  const second = vm.runInContext('openPanel({ id:1, url:"https://engoo.com/app/daily-news" })', context);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(injections, 1); finishInjection();
+  assert.equal((await first).ok, true); assert.equal((await second).ok, true); assert.equal(opens, 1);
+  ready = false; fail = true;
+  const failed = await vm.runInContext('openPanel({ id:2, url:"https://example.com/" })', context);
+  assert.equal(failed.ok, false); assert.match(failed.error, /再読み込み/);
+  fail = false;
+  const retry = vm.runInContext('openPanel({ id:2, url:"https://example.com/" })', context);
+  await new Promise(resolve => setImmediate(resolve)); finishInjection();
+  assert.equal((await retry).ok, true); assert.equal(injections, 3);
+});
+
+test("restricted pages never inject and show an actionable error through shortcut and popup", async () => {
+  const script = await readFile(new URL("../extension/service-worker.js", import.meta.url), "utf8");
+  let command; let listener; let injected = 0; let menuOpened = 0; let message = "";
+  const context = { URL, chrome:{
+    action:{ async openPopup() { menuOpened++; } }, storage:{ session:{ async set(value) { message = value.phraseNestLaunchError; } } },
+    scripting:{ async executeScript() { injected++; } }, tabs:{ async query() { return [{ id:1, url:"chrome://extensions/" }]; } },
+    commands:{ onCommand:{ addListener(value) { command = value; } } }, runtime:{ onInstalled:{ addListener() {} }, onMessage:{ addListener(value) { listener = value; } } },
+  } };
+  vm.createContext(context); vm.runInContext(script, context);
+  for (const url of ["chrome://settings/","chrome-extension://other/page.html","file:///C:/file.txt","about:blank","https://chromewebstore.google.com/detail/test","https://chrome.google.com/webstore/detail/test"]) {
+    context.tab = { id:1, url }; assert.equal((await vm.runInContext("openPanel(tab)", context)).ok, false);
+  }
+  assert.equal((await vm.runInContext("openPanel(undefined)", context)).ok, false);
+  await command("translate-selection"); assert.equal(menuOpened, 1); assert.match(message, /この画面では/);
+  const response = await new Promise(resolve => { assert.equal(listener({ type:"OPEN_PANEL" }, {}, resolve), true); });
+  assert.equal(response.ok, false); assert.match(response.error, /ウェブストア/); assert.equal(injected, 0);
+});
+
+test("the toolbar popup opens the current page and displays opening errors", async () => {
+  const script = await readFile(new URL("../extension/launcher.js", import.meta.url), "utf8");
+  const elements = new Map(); let closed = 0; let response = { ok:true };
+  for (const id of ["#translate", "#settings", "#message"]) elements.set(id, { events:new Map(), addEventListener(name, callback) { this.events.set(name, callback); }, textContent:"" });
+  const context = { URL, document:{ querySelector:id => elements.get(id), querySelectorAll:() => [] }, window:{ close() { closed++; } }, chrome:{
+    storage:{ session:{ async get() { return { phraseNestLaunchError:"この画面では使えません" }; }, async remove() {} } },
+    runtime:{ openOptionsPage() {}, async sendMessage(message) { assert.equal(message.type, "OPEN_PANEL"); return response; } },
+  } };
+  vm.createContext(context); vm.runInContext(script, context); await Promise.resolve();
+  assert.match(elements.get("#message").textContent, /この画面/);
+  await elements.get("#translate").events.get("click")(); assert.equal(closed, 1);
+  response = { ok:false, error:"再読み込みしてください" };
+  await elements.get("#translate").events.get("click")();
+  assert.equal(closed, 1); assert.equal(elements.get("#translate").disabled, false); assert.match(elements.get("#message").textContent, /再読み込み/);
+});
+
+test("page capture acknowledges readiness and preserves the actual URL/title without mislabelling other sites as Reddit", async () => {
+  const script = await readFile(new URL("../extension/content-script.js", import.meta.url), "utf8");
+  let listener;
+  const context = { URL, location:{ href:"https://engoo.com/app/daily-news/article" }, document:{ title:"Engoo article" }, chrome:{ runtime:{ onMessage:{ addListener(value) { listener = value; } } } } };
+  vm.createContext(context); vm.runInContext(script, context);
+  let acknowledged; listener({ type:"PHRASE_NEST_READY" }, {}, value => { acknowledged = value; }); assert.equal(acknowledged.ready, true);
+  let metadata = vm.runInContext("pageSourceDetails()", context);
+  assert.equal(metadata.p_subreddit, null); assert.equal(metadata.p_source_url, context.location.href); assert.equal(metadata.p_source_title, "Engoo article");
+  context.location.href = "https://example.com/r/English";
+  assert.equal(vm.runInContext("pageSourceDetails()", context).p_subreddit, null);
+  context.location.href = "https://www.reddit.com/r/English/comments/test";
+  assert.equal(vm.runInContext("pageSourceDetails()", context).p_subreddit, "r/English");
 });
 
 test("panel resizing keeps the opposite corner fixed and enforces size limits", async () => {
@@ -550,7 +791,8 @@ test("four primary destinations group saved content and retain direct links", as
     assert.equal(navigation.resolveTab(tab, "sentences"), tab);
     assert.equal(navigation.primaryTab(tab), "library");
   }
-  for (const tab of ["menu", "organize", "settings"]) assert.equal(navigation.primaryTab(tab), "menu");
+  for (const tab of ["menu", "organize", "settings", "writing"]) assert.equal(navigation.primaryTab(tab), "menu");
+  assert.equal(navigation.resolveTab("writing", "notes"), "writing");
   assert.equal(navigation.resolveTab("unknown", "notes"), "today");
   const app = await loadTypeScriptModule("../app/learning-app.tsx", { require: name => name === "./navigation" ? navigation : name.startsWith(".") ? {} : nodeRequire(name) });
   const selections = [];
@@ -569,8 +811,8 @@ test("four primary destinations group saved content and retain direct links", as
   assert.match(savedHtml, /英文/); assert.match(savedHtml, /単語・熟語/); assert.match(savedHtml, /学習メモ/);
   const menu = app.MenuView({ pendingCount:5, onSelect:props.onSelect });
   const options = menu.props.children[1].props.children;
-  options[0].props.onClick(); options[1].props.onClick();
-  assert.deepEqual(selections, ["notes", "organize", "settings"]);
+  options[0].props.onClick(); options[1].props.onClick(); options[2].props.onClick();
+  assert.deepEqual(selections, ["notes", "writing", "organize", "settings"]);
   const menuHtml = renderToStaticMarkup(menu);
   assert.match(menuHtml, /未整理 5件/);
   assert.match(menuHtml, /設定/);

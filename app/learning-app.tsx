@@ -5,6 +5,7 @@ import { appendVocabularyDetails, applyOrganizationResult, captureSessionFromUrl
 import { buildOrganizationExport, countPendingOrganizationItems, exportPresets, OrganizationResult, OrganizationSuggestion, parseOrganizationResult } from "./organization";
 import { ManualEntryView } from "./manual-entry";
 import { ActivityCalendar } from "./activity-calendar";
+import { WritingPracticeView } from "./writing-practice";
 import { sentenceSourceLabel } from "./manual-entry-data";
 import { isSavedTab, primaryTab, resolveTab, savedTabStorageKey, type SavedTab, type Tab } from "./navigation";
 
@@ -166,10 +167,11 @@ export function LearningApp() {
           </nav>
         </aside>
         <section className="content">
+          {(tab === "organize" || tab === "settings" || tab === "writing") && <button className="menu-back" type="button" onClick={() => selectTab("menu")}>メニューに戻る</button>}
           <div className="manual-entry-panel" hidden={tab !== "capture"}><ManualEntryView onSaved={() => setReloadVersion((version) => version + 1)} onOpenLibrary={() => selectTab("sentences")} onTranslation={(monthlyCharacters) => setUsage((current) => ({ ...current, cloudCharacters: monthlyCharacters }))} /></div>
+          <div className="writing-entry-panel" hidden={tab !== "writing"}><WritingPracticeView words={words} sentences={sentenceItems} onSaved={() => setReloadVersion((version) => version + 1)} onOpenLibrary={() => selectTab("sentences")} onEditSentence={(id) => setEditingSentence(sentenceItems.find(sentence => sentence.id === id) || null)} /></div>
           {isSavedTab(tab) && <SavedContentNavigation tab={tab} onSelect={selectTab} counts={{ sentences: sentenceItems.length, words: words.length, notes: noteCount }} />}
-          {(tab === "organize" || tab === "settings") && <button className="menu-back" type="button" onClick={() => selectTab("menu")}>メニューに戻る</button>}
-          {tab !== "capture" && <>{(tab === "today" || isSavedTab(tab)) && <div className="library-search"><label htmlFor="library-search">保存内容をまとめて検索</label><div><input id="library-search" type="search" placeholder="語句・英文・コアイメージ・メモ" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />{searchQuery && <button type="button" onClick={() => setSearchQuery("")}>検索を閉じる</button>}</div></div>}
+          {tab !== "capture" && tab !== "writing" && <>{(tab === "today" || isSavedTab(tab)) && <div className="library-search"><label htmlFor="library-search">保存内容をまとめて検索</label><div><input id="library-search" type="search" placeholder="語句・英文・コアイメージ・メモ" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />{searchQuery && <button type="button" onClick={() => setSearchQuery("")}>検索を閉じる</button>}</div></div>}
           {searchQuery.trim() ? <SearchView words={words} sentences={sentenceItems} query={searchQuery} onEditWord={setEditingWord} onEditSentence={setEditingSentence} /> : <>
             {tab === "today" && <><ActivityCalendar refreshVersion={reloadVersion + activityVersion} /><TodayView words={words} reviewWord={reviewWord} revealed={revealed} completed={completed} remaining={reviewQueue.length} onReveal={() => setRevealed(true)} onAnswer={answerReview} /></>}
             {tab === "words" && <WordsView words={filteredWords} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onEdit={setEditingWord} onAppend={setAppendingWord} />}
@@ -209,6 +211,7 @@ export function SavedContentNavigation({ tab, onSelect, counts }: { tab: SavedTa
 
 export function MenuView({ pendingCount, onSelect }: { pendingCount: number; onSelect: (tab: Tab) => void }) {
   return <><PageHeading eyebrow="MENU" title="メニュー" description="" /><div className="menu-options">
+    <button type="button" className="menu-option" onClick={() => onSelect("writing")}><span className="menu-option-icon" aria-hidden="true">✎</span><span><strong>英作文の練習</strong><span>保存した表現を使って書く・外部AIの添削を貼り付ける</span></span><small>APIなし</small></button>
     <button type="button" className="menu-option" onClick={() => onSelect("organize")}><span className="menu-option-icon" aria-hidden="true">◇</span><span><strong>Codex整理</strong><span>メモや熟語の整理・結果の読み込み</span></span><small>未整理 {pendingCount}件</small></button>
     <button type="button" className="menu-option" onClick={() => onSelect("settings")}><span className="menu-option-icon" aria-hidden="true">⚙</span><span><strong>設定</strong><span>接続情報・翻訳の使用量・ログイン</span></span></button>
   </div></>;

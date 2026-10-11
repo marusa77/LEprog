@@ -61,8 +61,9 @@ const stopWords = new Set(
   "this that these those there here have has had been being were was will would could should about after before because while where which what when who whom whose then than just also very really much many some any each every other another into from with without your yours their theirs they them our ours you are and but not for the its it's can may might must does did doing done said says like even only more most such still already ever never reddit post comment people thing things something anything everything someone anyone everyone".split(" "),
 );
 
-chrome.runtime.onMessage.addListener((message) => {
-  if (message.type === "OPEN_TRANSLATOR") openTranslator();
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message.type === "PHRASE_NEST_READY") { sendResponse({ ready: true }); return; }
+  if (message.type === "OPEN_TRANSLATOR") { void openTranslator(); sendResponse({ ok: true }); }
 });
 
 async function openTranslator() {
@@ -630,8 +631,7 @@ async function saveCapture() {
       core_image: row.querySelector(".pn-core-image").value,
       note: row.querySelector(".pn-term-note").value,
     }));
-  const pathMatch = location.pathname.match(/\/r\/([^/]+)/i);
-  const payload = { p_original_text: selectedPageText, p_machine_translation: root.querySelector("#pn-translation").value, p_translation: root.querySelector("#pn-translation").value, p_note: root.querySelector("#pn-note").value, p_source_url: location.href, p_source_title: document.title, p_subreddit: pathMatch ? `r/${pathMatch[1]}` : null, p_terms: terms };
+  const payload = { p_original_text: selectedPageText, p_machine_translation: root.querySelector("#pn-translation").value, p_translation: root.querySelector("#pn-translation").value, p_note: root.querySelector("#pn-note").value, ...pageSourceDetails(), p_terms: terms };
   let response;
   try { response = await chrome.runtime.sendMessage({ type: "SAVE_CAPTURE", payload }); }
   catch { response = { ok: false, error: "保存先に接続できませんでした。もう一度お試しください。" }; }
@@ -642,6 +642,12 @@ async function saveCapture() {
   updateSaveState();
   const existingCount = response.result.terms?.filter((term) => term.existing).length || 0;
   setPanelMessage(`保存しました。${existingCount ? `登録済みの語句 ${existingCount}件は登場回数を増やしました。${response.result.details_appending ? "異なる意味・コアイメージ・メモは区切り線付きで追記しました。同じ説明は重ねて追加しません。" : "既存の説明は保持しています。追記を有効にするにはSupabaseで0004のSQLを実行してください。"}` : ""}`);
+}
+
+function pageSourceDetails() {
+  const url = new URL(location.href);
+  const pathMatch = /(^|\.)reddit\.com$/i.test(url.hostname) ? url.pathname.match(/\/r\/([^/]+)/i) : null;
+  return { p_source_url: location.href, p_source_title: document.title, p_subreddit: pathMatch ? `r/${pathMatch[1]}` : null };
 }
 
 function setPanelMessage(text, error = false) { if (!phraseNestHost) return; const element = phraseNestHost.shadowRoot.querySelector("#pn-message"); element.textContent = text; element.classList.toggle("pn-error", error); }

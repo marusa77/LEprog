@@ -43,7 +43,7 @@ export function buildManualCapture(entry: ManualEntry): CapturePayload {
 
 export function sentenceSourceLabel(sentence: { subreddit: string | null; source_title?: string | null; source_url?: string | null }) {
   if (sentence.subreddit) return sentence.subreddit;
-  if (sentence.source_title === "外部から入力" || sentence.source_title === "日常・自分用") return sentence.source_title;
+  if (sentence.source_title === "外部から入力" || sentence.source_title === "日常・自分用" || sentence.source_title === "英作文") return sentence.source_title;
   if (sentence.source_url) {
     try {
       const host = new URL(sentence.source_url).hostname;

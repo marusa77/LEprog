@@ -1,18 +1,60 @@
+const panelOpenings = new Map();
+
+function supportsPage(url) {
+  try {
+    const parsed = new URL(url);
+    return ["https:", "http:"].includes(parsed.protocol)
+      && parsed.hostname !== "chromewebstore.google.com"
+      && !(parsed.hostname === "chrome.google.com" && parsed.pathname.startsWith("/webstore"));
+  } catch { return false; }
+}
+
 async function openPanel(tab) {
-  if (!tab?.id || !/^https:\/\/([\w-]+\.)*reddit\.com\//.test(tab.url || "")) {
-    await chrome.action.openPopup();
-    return;
+  if (!Number.isInteger(tab?.id) || !supportsPage(tab.url)) {
+    return { ok: false, error: "この画面では英文を取り込めません。Engooなどの通常のWebページを開いてください。Chromeの設定画面やウェブストアでは使えません。" };
   }
-  try { await chrome.tabs.sendMessage(tab.id, { type: "OPEN_TRANSLATOR" }); }
-  catch { await chrome.action.openPopup(); }
+  // One opening per tab, even when the shortcut/button is pressed repeatedly.
+  if (panelOpenings.has(tab.id)) return panelOpenings.get(tab.id);
+  const opening = (async () => {
+    try {
+      let ready = false;
+      try { ready = (await chrome.tabs.sendMessage(tab.id, { type: "PHRASE_NEST_READY" }))?.ready === true; }
+      catch { /* The page has not loaded PhraseNest yet. */ }
+      if (!ready) {
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          files: ["common-expressions.js", "conversation-patterns.js", "content-script.js"],
+        });
+      }
+      // Existing scripts are reused: keep the window size and unsaved draft.
+      const response = await chrome.tabs.sendMessage(tab.id, { type: "OPEN_TRANSLATOR" });
+      if (response?.ok !== true) throw new Error("Page did not acknowledge opening");
+      return { ok: true };
+    } catch {
+      return { ok: false, error: "このページでPhraseNestを開けませんでした。ページを再読み込みして、英文を選択し直してからお試しください。Chromeが拡張機能の動作を制限している画面では使えません。" };
+    }
+  })();
+  panelOpenings.set(tab.id, opening);
+  try { return await opening; }
+  finally { if (panelOpenings.get(tab.id) === opening) panelOpenings.delete(tab.id); }
+}
+
+async function showLaunchError(error) {
+  try {
+    await chrome.storage.session.set({ phraseNestLaunchError: error });
+    await chrome.action.openPopup();
+  } catch { /* Browser controls can prevent opening the menu; no page data was sent. */ }
 }
 
 let customPatternCache = { expiresAt: 0, rows: [] };
 
 chrome.commands.onCommand.addListener(async (command) => {
   if (command !== "translate-selection") return;
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  await openPanel(tab);
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const result = await openPanel(tab);
+    if (!result.ok) await showLaunchError(result.error);
+  } catch { await showLaunchError("ページを再読み込みしてから、もう一度PhraseNestを呼び出してください。"); }
 });
 
 chrome.runtime.onInstalled.addListener(async ({ reason }) => {
@@ -23,11 +65,8 @@ chrome.runtime.onInstalled.addListener(async ({ reason }) => {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === "OPEN_PANEL") {
-    chrome.tabs.query({ active: true, currentWindow: true }).then(async ([tab]) => {
-      if (!tab?.id || !/^https:\/\/([\w-]+\.)*reddit\.com\//.test(tab.url || "")) return { ok: false, error: "英文の取り込みはRedditのページで使えます。" };
-      await chrome.tabs.sendMessage(tab.id, { type: "OPEN_TRANSLATOR" });
-      return { ok: true };
-    }).catch(() => ({ ok: false, error: "Redditのページを再読み込みしてからお試しください。" })).then(sendResponse);
+    chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => openPanel(tab))
+      .catch(() => ({ ok: false, error: "ページを再読み込みしてからお試しください。" })).then(sendResponse);
   }
   else if (message.type === "SAVE_CAPTURE") handleSave(message.payload).then(sendResponse);
   else if (message.type === "TRANSLATE") callFunction("translate", message.payload).then(sendResponse);
