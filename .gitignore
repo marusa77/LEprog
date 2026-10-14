@@ -21,6 +21,9 @@
 # misc
 .DS_Store
 *.pem
+*.key
+*.p12
+*.pfx
 
 # debug
 npm-debug.log*
@@ -30,6 +33,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+.dev.vars*
+/.secrets/
+/secrets/
 
 # vercel
 .vercel
@@ -44,6 +51,6 @@ next-env.d.ts
 /.codex/
 
 # Private learning exports and local publishing artifacts
-/pn-*.json
+pn-*.json
 /.openai/*.tar.gz
 /.sites-runtime/
