@@ -29,6 +29,10 @@
 .pn-label { display: block; margin: 16px 0 8px; color: var(--ink); font-size: 14px; font-weight: 700; }
 .pn-source { padding: 13px; background: var(--paper); border-left: 3px solid var(--amber); border-radius: 0 8px 8px 0; font: 500 17px/1.55 var(--font-sans); letter-spacing: -.015em; user-select: text; }
 .pn-source::selection { background: #f1d79f; }
+.pn-source-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:6px 10px; margin:16px 0 8px; }.pn-source-heading .pn-label { margin:0; }
+.pn-copy-actions { display:flex; flex-wrap:wrap; gap:6px; }.pn-copy { min-height:32px; padding:4px 8px; border:1px solid var(--line); border-radius:7px; background:var(--surface); color:var(--green-dark); font:600 12px/1.5 var(--font-sans); cursor:pointer; }.pn-copy:hover { border-color:var(--green); background:var(--mint); }
+.pn-copy-status { margin:8px 0; color:var(--green-dark); font-size:12px; line-height:1.7; }.pn-copy-status.pn-copy-error { color:#945047; }
+.pn-copy-fallback { margin:10px 0; padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--paper); }.pn-copy-fallback label { display:block; margin-bottom:8px; font-size:12px; line-height:1.7; }.pn-copy-fallback textarea { max-height:240px; overflow-y:auto; }.pn-copy-fallback .pn-copy { margin-top:8px; }
 .pn-help { margin: 8px 0; color: var(--muted); font-size: 12px; }
 .pn-link { display: block; margin: 0 0 8px auto; border: 0; background: transparent; color: var(--green); font: 700 14px/1.5 var(--font-sans); cursor: pointer; }
 textarea, input { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: white; color: var(--ink); padding: 11px 12px; font: var(--reading-size)/1.75 var(--font-sans); outline: none; }

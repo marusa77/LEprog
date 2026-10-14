@@ -125,3 +125,15 @@ button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible { 
 .writing-ai-topic,.writing-prompt { margin-top:16px; }.writing-preserve { white-space:pre-wrap; overflow-wrap:anywhere; line-height:1.85; }.writing-history { margin-top:32px; }.writing-history>.writing-card-heading { margin-bottom:16px; }.writing-history small,.writing-history time { color:var(--muted); font-size:.875rem; }
 @media(max-width:900px) { .writing-selected { grid-template-columns:1fr; } }
 @media(max-width:620px) { .writing-card { padding:18px 15px; }.writing-word-list { grid-template-columns:1fr; }.writing-card-heading .primary-button { width:100%; }.writing-notice { padding:13px 15px; } }
+.sentence-study-controls { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:20px 0 10px; }
+.sentence-study-controls label,.sentence-preference { display:flex; align-items:center; gap:8px; font-size:.85rem; color:var(--muted); }
+.sentence-study-controls select,.sentence-preference select { padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--ink); font:inherit; min-height:40px; }
+.sentence-round-start { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-left:auto; }
+.sentence-study-help { color:var(--muted); font-size:.8rem; line-height:1.7; margin:10px 0 18px; }
+.sentence-study-footer { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; border-top:1px solid var(--line); padding-top:14px; margin-top:18px; }
+.sentence-study-footer small { color:var(--muted); font-size:.8rem; }
+.sentence-study-notice,.sentence-study-message,.sentence-study-error { padding:12px 15px; border-radius:10px; font-size:.9rem; line-height:1.7; overflow-wrap:anywhere; }
+.sentence-study-notice { background:var(--paper); border:1px solid var(--line); }.sentence-study-message { background:var(--mint); color:var(--green-dark); }.sentence-study-error { background:#f8e9e7; color:#8c4037; }
+.sentence-round { margin-top:20px; }.sentence-round-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:14px 0; color:var(--muted); font-size:.9rem; }
+.sentence-round-actions { display:flex; flex-wrap:wrap; gap:12px; margin-top:22px; }.sentence-round-complete { padding:32px 22px; border:1px solid var(--line); border-radius:14px; background:var(--surface); }.sentence-round-complete p { color:var(--muted); line-height:1.8; }
+@media(max-width:620px) { .sentence-round-start { margin-left:0; width:100%; }.sentence-study-footer { align-items:flex-start; flex-direction:column; }.sentence-round-actions>button { flex:1; min-height:44px; }.sentence-study-controls select,.sentence-preference select { min-height:44px; }.sentence-round-complete h2 { font-size:22px; } }

@@ -1,10 +1,11 @@
 import { buildManualCapture, type CaptureResult, type ManualEntry } from "./manual-entry-data";
 import { activityRange, type ActivitySentence, type ActivityReview } from "./learning-activity";
 import { buildWritingCapture, type WritingEntry } from "./writing-practice-data";
+import { isReviewPreference, type ReviewPreference, type SentenceStudyMetadata } from "./sentence-study-data";
 
 export type BrowserSession = { access_token: string; refresh_token: string; expires_at: number; user?: { email?: string } };
 export type VocabularyRow = { id: string; term: string; meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered"; occurrence_count: number; next_review_at: string; created_at: string; updated_at: string; organization_checked_at: string | null };
-export type SentenceRow = { id: string; original_text: string; translation: string; note: string; subreddit: string | null; source_title: string | null; source_url: string | null; created_at: string; updated_at: string; organization_checked_at: string | null };
+export type SentenceRow = { id: string; original_text: string; translation: string; note: string; subreddit: string | null; source_title: string | null; source_url: string | null; created_at: string; updated_at: string; organization_checked_at: string | null; review_preference?: ReviewPreference; last_reviewed_at?: string | null; sentence_review_count?: number };
 export type SentenceVocabularyRow = { sentence_id: string; vocabulary_id: string; selected_text: string };
 export type MonthlyUsageRow = { cloud_translation_characters: number; ai_estimated_usd: number | string };
 export type SupabaseConfiguration = { projectUrl: string; publishableKey: string };
@@ -114,7 +115,7 @@ export async function loadLearningData() {
   const monthStart = `${month.getFullYear()}-${String(month.getMonth() + 1).padStart(2, "0")}-01`;
   const [vocabulary, savedSentences, links, usageRows] = await Promise.all([
     restPaged<VocabularyRow>("/rest/v1/vocabulary_items?select=*&order=next_review_at.asc"),
-    restPaged<SentenceRow>("/rest/v1/sentences?select=*&order=created_at.desc"),
+    restPaged<SentenceRow>("/rest/v1/sentences?select=*&order=created_at.desc,id.desc"),
     restPaged<SentenceVocabularyRow>("/rest/v1/sentence_vocabulary?select=sentence_id,vocabulary_id,selected_text"),
     rest<MonthlyUsageRow[]>(`/rest/v1/monthly_usage?select=cloud_translation_characters,ai_estimated_usd&month=eq.${monthStart}&limit=1`),
   ]);
@@ -123,6 +124,33 @@ export async function loadLearningData() {
 
 export async function submitReview(id: string, result: "forgot" | "uncertain" | "remembered") {
   return rest<{ status: "unlearned" | "learning" | "mastered"; next_review_at: string; interval_days: number }>("/rest/v1/rpc/record_review", { method: "POST", body: JSON.stringify({ p_vocabulary_id: id, p_result: result }) });
+}
+
+function sentenceStudyError(error: unknown): never {
+  if (error instanceof Error && /PGRST202|PGRST204|42703|Could not find.*(?:function|column)|does not exist/i.test(error.message)) {
+    throw new Error("英文の復習記録の準備が必要です。Supabaseで0005_sentence_study.sqlを実行してから、ページを再読み込みしてください。");
+  }
+  throw error;
+}
+
+export async function updateSentenceReviewPreference(id: string, preference: ReviewPreference): Promise<SentenceStudyMetadata> {
+  if (!id || !isReviewPreference(preference)) throw new Error("英文と復習の出やすさを確認してください。");
+  try {
+    const rows = await rest<SentenceStudyMetadata[]>(`/rest/v1/sentences?id=eq.${encodeURIComponent(id)}&select=id,review_preference,last_reviewed_at,sentence_review_count`, {
+      method:"PATCH", headers:{ Prefer:"return=representation" }, body:JSON.stringify({ review_preference:preference }),
+    });
+    if (!rows[0]) throw new Error("復習の出やすさを保存できませんでした。");
+    return rows[0];
+  } catch (error) { return sentenceStudyError(error); }
+}
+
+export async function submitSentenceReview(id: string, reviewId: string): Promise<SentenceStudyMetadata> {
+  if (!id || !reviewId) throw new Error("復習する英文を確認してください。");
+  try {
+    return await rest<SentenceStudyMetadata>("/rest/v1/rpc/record_sentence_review", {
+      method:"POST", body:JSON.stringify({ p_sentence_id:id, p_review_id:reviewId }),
+    });
+  } catch (error) { return sentenceStudyError(error); }
 }
 
 export async function loadLearningActivity(today: string) {

@@ -6,12 +6,14 @@ import { buildOrganizationExport, countPendingOrganizationItems, exportPresets, 
 import { ManualEntryView } from "./manual-entry";
 import { ActivityCalendar } from "./activity-calendar";
 import { WritingPracticeView } from "./writing-practice";
+import { SentenceLibraryView } from "./sentence-study";
+import { isReviewPreference, type SentenceStudyMetadata, type StudySentence } from "./sentence-study-data";
 import { sentenceSourceLabel } from "./manual-entry-data";
 import { isSavedTab, primaryTab, resolveTab, savedTabStorageKey, type SavedTab, type Tab } from "./navigation";
 
 type LearningStatus = "unlearned" | "learning" | "mastered";
 type Word = { id: string; term: string; meaning: string; coreImage: string; note: string; status: LearningStatus; occurrences: number; dueLabel: string; example: string; translation: string; createdAt: string; updatedAt: string; organizationCheckedAt: string | null };
-type Sentence = { id: string; source: string; translation: string; note: string; community: string; sourceUrl: string | null; savedAt: string; terms: string[]; updatedAt: string; organizationCheckedAt: string | null };
+type Sentence = StudySentence;
 
 const statusLabels: Record<LearningStatus, string> = { unlearned: "未学習", learning: "学習中", mastered: "覚えた" };
 
@@ -83,9 +85,14 @@ export function LearningApp() {
           community: sentenceSourceLabel(sentence),
           sourceUrl: sentence.source_url,
           savedAt: new Intl.DateTimeFormat("ja-JP", { month: "short", day: "numeric" }).format(new Date(sentence.created_at)),
+          createdAt: sentence.created_at,
           terms: links.filter((link) => link.sentence_id === sentence.id).map((link) => vocabularyById.get(link.vocabulary_id)?.term || link.selected_text),
           updatedAt: sentence.updated_at,
           organizationCheckedAt: sentence.organization_checked_at,
+          reviewPreference: isReviewPreference(sentence.review_preference) ? sentence.review_preference : "normal",
+          lastReviewedAt: sentence.last_reviewed_at || null,
+          reviewCount: sentence.sentence_review_count || 0,
+          reviewReady: isReviewPreference(sentence.review_preference) && "last_reviewed_at" in sentence && typeof sentence.sentence_review_count === "number",
         })));
         setUsage({ cloudCharacters: currentUsage.cloud_translation_characters, aiUsd: Number(currentUsage.ai_estimated_usd) || 0 });
         setConnection("live");
@@ -135,6 +142,12 @@ export function LearningApp() {
     setEditingSentence(null);
   }
 
+  function saveSentenceStudyMetadata(metadata: SentenceStudyMetadata) {
+    setSentenceItems(current => current.map(sentence => sentence.id === metadata.id ? {
+      ...sentence, reviewPreference:metadata.review_preference, lastReviewedAt:metadata.last_reviewed_at, reviewCount:metadata.sentence_review_count,
+    } : sentence));
+  }
+
   function selectTab(nextTab: Tab) {
     setTab(nextTab);
     setSearchQuery("");
@@ -171,11 +184,12 @@ export function LearningApp() {
           <div className="manual-entry-panel" hidden={tab !== "capture"}><ManualEntryView onSaved={() => setReloadVersion((version) => version + 1)} onOpenLibrary={() => selectTab("sentences")} onTranslation={(monthlyCharacters) => setUsage((current) => ({ ...current, cloudCharacters: monthlyCharacters }))} /></div>
           <div className="writing-entry-panel" hidden={tab !== "writing"}><WritingPracticeView words={words} sentences={sentenceItems} onSaved={() => setReloadVersion((version) => version + 1)} onOpenLibrary={() => selectTab("sentences")} onEditSentence={(id) => setEditingSentence(sentenceItems.find(sentence => sentence.id === id) || null)} /></div>
           {isSavedTab(tab) && <SavedContentNavigation tab={tab} onSelect={selectTab} counts={{ sentences: sentenceItems.length, words: words.length, notes: noteCount }} />}
-          {tab !== "capture" && tab !== "writing" && <>{(tab === "today" || isSavedTab(tab)) && <div className="library-search"><label htmlFor="library-search">保存内容をまとめて検索</label><div><input id="library-search" type="search" placeholder="語句・英文・コアイメージ・メモ" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />{searchQuery && <button type="button" onClick={() => setSearchQuery("")}>検索を閉じる</button>}</div></div>}
+          {(tab === "today" || isSavedTab(tab)) && <div className="library-search"><label htmlFor="library-search">保存内容をまとめて検索</label><div><input id="library-search" type="search" placeholder="語句・英文・コアイメージ・メモ" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />{searchQuery && <button type="button" onClick={() => setSearchQuery("")}>検索を閉じる</button>}</div></div>}
+          <div hidden={tab !== "sentences" || Boolean(searchQuery.trim())}><SentenceLibraryView active={tab === "sentences" && !searchQuery.trim()} sentences={sentenceItems} onEdit={setEditingSentence} onStudyUpdated={saveSentenceStudyMetadata} /></div>
+          {tab !== "capture" && tab !== "writing" && <>
           {searchQuery.trim() ? <SearchView words={words} sentences={sentenceItems} query={searchQuery} onEditWord={setEditingWord} onEditSentence={setEditingSentence} /> : <>
             {tab === "today" && <><ActivityCalendar refreshVersion={reloadVersion + activityVersion} /><TodayView words={words} reviewWord={reviewWord} revealed={revealed} completed={completed} remaining={reviewQueue.length} onReveal={() => setRevealed(true)} onAnswer={answerReview} /></>}
             {tab === "words" && <WordsView words={filteredWords} filter={filter} query={query} onFilter={setFilter} onQuery={setQuery} onEdit={setEditingWord} onAppend={setAppendingWord} />}
-            {tab === "sentences" && <SentencesView sentences={sentenceItems} onEdit={setEditingSentence} />}
             {tab === "notes" && <NotesView words={words} sentences={sentenceItems} onEditWord={setEditingWord} onEditSentence={setEditingSentence} />}
             {tab === "organize" && <OrganizationView words={words} sentences={sentenceItems} />}
             {tab === "settings" && <SettingsView connection={connection} error={connectionError} usage={usage} />}
@@ -240,19 +254,6 @@ function SearchView({ words, sentences, query, onEditWord, onEditSentence }: { w
     {!!matchingWords.length && <section className="search-section"><h2>単語・熟語・語句メモ</h2><div className="note-list">{matchingWords.map((word) => <article className="note-card" key={word.id}><div className="note-card-heading"><h3>{word.term}</h3><button className="edit-button" type="button" onClick={() => onEditWord(word)}>編集</button></div><p className="note-body">{word.meaning}</p>{word.coreImage && <div className="word-core-image"><span>コアイメージ</span>{word.coreImage}</div>}{word.note && <p className="note-body">{word.note}</p>}</article>)}</div></section>}
     {!!matchingSentences.length && <section className="search-section"><h2>英文・英文メモ</h2><div className="sentence-list">{matchingSentences.map((sentence) => <article className="sentence-card" key={sentence.id}><div className="sentence-meta"><span>{sentence.community}</span><button className="edit-button" type="button" onClick={() => onEditSentence(sentence)}>編集</button></div><h3>{sentence.source}</h3><p className="translation">{sentence.translation}</p>{sentence.note && <p className="personal-note">{sentence.note}</p>}</article>)}</div></section>}
     {!matchingWords.length && !matchingSentences.length && <div className="list-empty"><h2>保存内容が見つかりません</h2><p>短い語句や日本語の意味でも検索できます。</p></div>}
-  </>;
-}
-
-function SentencesView({ sentences, onEdit }: { sentences: Sentence[]; onEdit: (sentence: Sentence) => void }) {
-  return <>
-    <PageHeading eyebrow="SAVED SENTENCES" title="保存した英文" description="元の文脈と、自分の説明を一緒に残します。" />
-    {sentences.length ? <div className="sentence-list">{sentences.map((sentence) => <article className="sentence-card" key={sentence.id}>
-      <div className="sentence-meta"><span>{sentence.community}</span><div><time>{sentence.savedAt}</time><button className="edit-button" type="button" onClick={() => onEdit(sentence)}>編集</button></div></div>
-      <h2>{sentence.source}</h2><p className="translation">{sentence.translation || "訳はまだありません"}</p>
-      {sentence.note && <p className="personal-note">メモ：{sentence.note}</p>}
-      <div className="term-tags">{sentence.terms.map((term) => <span key={term}>{term}</span>)}</div>
-      {sentence.sourceUrl && /^https?:\/\//i.test(sentence.sourceUrl) && <p className="sentence-origin-link"><a href={sentence.sourceUrl} target="_blank" rel="noopener noreferrer">元のページを開く</a></p>}
-    </article>)}</div> : <div className="list-empty"><h2>保存した英文はまだありません</h2><p>「入力して保存」またはRedditのChrome拡張機能から登録できます。</p></div>}
   </>;
 }
 
