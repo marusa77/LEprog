@@ -5,6 +5,8 @@
 - Verify the checkout path, Git remote, active branch, and worktree before editing.
 - Preserve unrelated local changes. Do not reset, force-push, or rewrite published history.
 - Never commit API keys, credentials, local environment files, or personal learning exports.
+- For personal GitHub commits, preserve the configured GitHub `noreply` identity. Verify both `GIT_AUTHOR_IDENT` and `GIT_COMMITTER_IDENT` before committing or merging; environment variables and command-level options can override Git configuration.
+- Never introduce a real personal email address into new commit metadata or tracked configuration. Do not rewrite earlier commits merely to update future identity settings.
 
 ## Branch workflow
 
