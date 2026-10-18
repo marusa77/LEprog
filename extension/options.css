@@ -1,1 +1,47 @@
-:root{--ink:#17231f;--muted:#69746f;--paper:#f6f4ed;--surface:#fffdf8;--line:#deddd4;--green:#1f654f;--mint:#dcece4}*{box-sizing:border-box}body{margin:0;background:var(--paper);color:var(--ink);font-family:Arial,"Yu Gothic",sans-serif}main{width:min(680px,calc(100% - 32px));margin:48px auto}header{display:flex;align-items:center;gap:15px;margin-bottom:28px}.mark{width:48px;height:48px;display:grid;place-items:center;background:var(--green);color:white;border-radius:15px 15px 15px 5px;font:28px Georgia,serif}h1{margin:0;font:500 30px Georgia,"Yu Mincho",serif}header p{margin:5px 0 0;color:var(--muted)}section{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:24px;margin:14px 0}h2{margin:0 0 18px;font:500 19px Georgia,"Yu Mincho",serif}label{display:block;margin:12px 0;color:var(--muted);font-size:13px}input{width:100%;margin-top:6px;padding:12px;border:1px solid var(--line);border-radius:8px;background:white}button{border:1px solid var(--line);border-radius:8px;background:white;padding:11px 15px;cursor:pointer;font-weight:700}button:disabled{cursor:wait;opacity:.7}.primary,#save-config{background:var(--green);border-color:var(--green);color:white}.hint{color:var(--muted);font-size:12px}.inline-message{display:inline-block;min-height:20px;margin:0 0 0 10px;color:var(--green);font-size:13px;font-weight:700;vertical-align:middle}.success{display:inline-block;margin-right:12px;padding:7px 10px;background:var(--mint);color:var(--green);border-radius:99px;font-weight:700}kbd{padding:5px 8px;border:1px solid var(--line);border-bottom-width:3px;border-radius:5px;background:white}#message{min-height:20px;color:var(--green);font-weight:700}code{display:block;margin-top:6px;padding:8px;background:var(--paper);border-radius:6px;word-break:break-all;color:var(--ink)}
+/* Settings use the same calm green surfaces and system font as the app. */
+:root {
+  --ink: #213b2e;
+  --muted: #53695c;
+  --paper: #f0f5f1;
+  --surface: #fcfefc;
+  --surface-soft: #e8f1eb;
+  --line: #cbdad0;
+  --line-strong: #789281;
+  --green: #326b50;
+  --green-dark: #214c39;
+  --mint: #deeee2;
+  --sage: #7b9c86;
+  --focus: #40785a;
+  --amber: #785119;
+  --amber-soft: #fbf2df;
+  --rose: #9f443d;
+  --rose-soft: #faeae7;
+  --font-sans: -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans JP","Hiragino Sans","Yu Gothic UI",Roboto,Helvetica,Arial,sans-serif;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--paper); color: var(--ink); font: 16px/1.7 var(--font-sans); -webkit-font-smoothing: antialiased; }
+main { width: min(680px,calc(100% - 32px)); margin: 48px auto; }
+header { display: flex; align-items: center; gap: 15px; margin-bottom: 28px; }
+.mark { width: 48px; height: 48px; display: grid; place-items: center; flex-shrink: 0; background: var(--green); color: white; border-radius: 14px; font-size: 28px; font-weight: 700; }
+h1 { margin: 0; font-size: 30px; font-weight: 650; letter-spacing: -.035em; line-height: 1.3; }
+header p { margin: 5px 0 0; color: var(--muted); }
+section { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 24px; margin: 16px 0; box-shadow: 0 8px 24px rgba(33,59,46,.035); }
+h2 { margin: 0 0 18px; font-size: 19px; font-weight: 650; letter-spacing: -.02em; }
+label { display: block; margin: 14px 0; color: var(--muted); font-size: 14px; }
+input { width: 100%; margin-top: 6px; padding: 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: white; color: var(--ink); font: inherit; }
+input::placeholder { color: var(--muted); opacity: 1; }
+button { min-height: 44px; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--ink); padding: 11px 15px; cursor: pointer; font: 650 14px/1.5 var(--font-sans); }
+button:not(:disabled):hover { background: var(--mint); border-color: var(--green); }
+button:disabled { cursor: wait; opacity: .7; }
+.primary,#save-config { background: var(--green); border-color: var(--green); color: white; }
+.primary:not(:disabled):hover,#save-config:not(:disabled):hover { background: var(--green-dark); border-color: var(--green-dark); }
+.hint { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+.inline-message { display: inline-block; min-height: 20px; margin: 0 0 0 10px; color: var(--green); font-size: 14px; font-weight: 650; vertical-align: middle; }
+.success { display: inline-block; margin-right: 12px; padding: 7px 10px; background: var(--mint); color: var(--green-dark); border-radius: 99px; font-size: 14px; font-weight: 650; }
+kbd { padding: 5px 8px; border: 1px solid var(--line); border-bottom-width: 3px; border-radius: 5px; background: var(--surface-soft); font-size: 14px; }
+#message { min-height: 20px; color: var(--green); font-weight: 650; }
+code { display: block; margin-top: 6px; padding: 10px 12px; background: var(--surface-soft); border-radius: 8px; word-break: break-all; color: var(--ink); font-size: 13px; }
+a { color: var(--green); text-underline-offset: 3px; }
+::selection { background: var(--mint); color: var(--ink); }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+@media(max-width: 480px) { main { margin: 28px auto; } section { padding: 20px 16px; } h1 { font-size: 26px; } .inline-message { display: block; margin: 10px 0 0; } }
