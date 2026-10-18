@@ -2,6 +2,7 @@ import { buildManualCapture, type CaptureResult, type ManualEntry } from "./manu
 import { activityRange, type ActivitySentence, type ActivityReview } from "./learning-activity";
 import { buildWritingCapture, type WritingEntry } from "./writing-practice-data";
 import { isReviewPreference, type ReviewPreference, type SentenceStudyMetadata } from "./sentence-study-data";
+import { validateKnowledgeNote, type KnowledgeNote, type KnowledgeNoteInput } from "./knowledge-notes-data";
 
 export type BrowserSession = { access_token: string; refresh_token: string; expires_at: number; user?: { email?: string } };
 export type VocabularyRow = { id: string; term: string; meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered"; occurrence_count: number; next_review_at: string; created_at: string; updated_at: string; organization_checked_at: string | null };
@@ -231,4 +232,51 @@ export async function applyOrganizationResult(
     method: "POST",
     body: JSON.stringify({ p_processed_sources: processedSources, p_suggestions: suggestions }),
   });
+}
+
+function knowledgeNoteError(error: unknown): never {
+  if (error instanceof Error && /(?:could not find.*knowledge_notes|knowledge_notes.*(?:does not exist|schema cache))/i.test(error.message)) {
+    throw new Error("知識ノートの保存先の準備が必要です。SupabaseのSQL Editorで0006_knowledge_notes.sqlを実行してから「再読み込み」を押してください。他の保存内容や復習はそのまま使えます。");
+  }
+  throw error;
+}
+
+export async function loadKnowledgeNotes(): Promise<KnowledgeNote[]> {
+  try { return await restPaged<KnowledgeNote>("/rest/v1/knowledge_notes?select=id,title,body,needs_review,created_at,updated_at&order=updated_at.desc,id.asc"); }
+  catch (error) { return knowledgeNoteError(error); }
+}
+
+export async function saveKnowledgeNote(id: string, input: KnowledgeNoteInput, expectedUpdatedAt: string | null): Promise<KnowledgeNote> {
+  const values = validateKnowledgeNote(input);
+  if (!id) throw new Error("ノートの識別情報がありません。入力を残したまま、もう一度お試しください。");
+  try {
+    if (expectedUpdatedAt) {
+      const rows = await rest<KnowledgeNote[]>(`/rest/v1/knowledge_notes?id=eq.${encodeURIComponent(id)}&updated_at=eq.${encodeURIComponent(expectedUpdatedAt)}&select=*`, {
+        method:"PATCH", headers:{ Prefer:"return=representation" }, body:JSON.stringify(values),
+      });
+      if (rows[0]) return rows[0];
+    } else {
+      // A stable client-generated ID prevents duplicate notes after a lost response.
+      const rows = await rest<KnowledgeNote[]>("/rest/v1/knowledge_notes?on_conflict=id&select=*", {
+        method:"POST", headers:{ Prefer:"resolution=ignore-duplicates,return=representation" }, body:JSON.stringify({ id, ...values }),
+      });
+      if (rows[0]) return rows[0];
+    }
+    // The previous request may have succeeded even if its response never arrived.
+    const saved = (await rest<KnowledgeNote[]>(`/rest/v1/knowledge_notes?id=eq.${encodeURIComponent(id)}&select=*`))[0];
+    if (saved && saved.title === values.title && saved.body === values.body && saved.needs_review === values.needs_review) return saved;
+    throw new Error("このノートは別の画面で更新されています。入力内容は残しています。必要な内容をコピーしてから一覧に戻り、最新のノートを読み直してください。");
+  } catch (error) { return knowledgeNoteError(error); }
+}
+
+export async function setKnowledgeNoteReviewFlag(note: KnowledgeNote, needsReview: boolean): Promise<KnowledgeNote> {
+  try {
+    const rows = await rest<KnowledgeNote[]>(`/rest/v1/knowledge_notes?id=eq.${encodeURIComponent(note.id)}&updated_at=eq.${encodeURIComponent(note.updated_at)}&select=*`, {
+      method:"PATCH", headers:{ Prefer:"return=representation" }, body:JSON.stringify({ needs_review:needsReview }),
+    });
+    if (rows[0]) return rows[0];
+    const saved = (await rest<KnowledgeNote[]>(`/rest/v1/knowledge_notes?id=eq.${encodeURIComponent(note.id)}&select=*`))[0];
+    if (saved && saved.needs_review === needsReview) return saved;
+    throw new Error("別の画面で更新されたため、目印を変更できませんでした。一覧を再読み込みしてからお試しください。");
+  } catch (error) { return knowledgeNoteError(error); }
 }
