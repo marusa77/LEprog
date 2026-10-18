@@ -3,6 +3,19 @@ export type KnowledgeNote = {
   created_at: string; updated_at: string;
 };
 export type KnowledgeNoteInput = Pick<KnowledgeNote, "title" | "body" | "needs_review">;
+export type KnowledgeNoteDraft = KnowledgeNoteInput & { id: string; expectedUpdatedAt: string | null; original: KnowledgeNoteInput | null };
+
+export function knowledgeNoteDraftChanged(draft: KnowledgeNoteDraft | null) {
+  return Boolean(draft && (draft.original
+    ? draft.title !== draft.original.title || draft.body !== draft.original.body || draft.needs_review !== draft.original.needs_review
+    : draft.title || draft.body || draft.needs_review));
+}
+
+export function mergeKnowledgeNote(notes: KnowledgeNote[], incoming: KnowledgeNote) {
+  const current = notes.find(note => note.id === incoming.id);
+  if (current && Date.parse(current.updated_at) > Date.parse(incoming.updated_at)) return notes;
+  return [incoming, ...notes.filter(note => note.id !== incoming.id)];
+}
 export const knowledgeNoteLimits = { title: 200, body: 50000 };
 
 export const knowledgeNoteTemplates = [
