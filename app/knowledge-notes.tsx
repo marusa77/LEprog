@@ -2,12 +2,15 @@
 
 import { useEffect, useRef, useState } from "react";
 import { loadKnowledgeNotes, saveKnowledgeNote, setKnowledgeNoteReviewFlag } from "./supabase-browser";
-import { appendKnowledgeTemplate, filterKnowledgeNotes, knowledgeNoteLimits, knowledgeNoteTemplates, type KnowledgeNote, type KnowledgeNoteInput } from "./knowledge-notes-data";
+import { filterKnowledgeNotes, knowledgeNoteDraftChanged, knowledgeNoteTemplates, mergeKnowledgeNote, type KnowledgeNote, type KnowledgeNoteDraft } from "./knowledge-notes-data";
+import { renderKnowledgeNoteEditor } from "./knowledge-note-editor";
 
-type Draft = KnowledgeNoteInput & { id: string; expectedUpdatedAt: string | null; original: KnowledgeNoteInput | null };
 const dateLabel = (value: string) => new Intl.DateTimeFormat("ja-JP", { year:"numeric", month:"short", day:"numeric", timeZone:"Asia/Tokyo" }).format(new Date(value));
 
-export function KnowledgeNotesView({ active = true, onCountChange }: { active?: boolean; onCountChange?: (count: number) => void }) {
+export function KnowledgeNotesView({ active = true, onCountChange, onCreateNote, savedNote, openNoteRequest }: {
+  active?: boolean; onCountChange?: (count: number) => void; onCreateNote: () => void;
+  savedNote?: KnowledgeNote | null; openNoteRequest?: KnowledgeNote | null;
+}) {
   const [notes, setNotes] = useState<KnowledgeNote[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -16,17 +19,29 @@ export function KnowledgeNotesView({ active = true, onCountChange }: { active?: 
   const [query, setQuery] = useState("");
   const [reviewOnly, setReviewOnly] = useState(false);
   const [openedId, setOpenedId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const [draft, setDraft] = useState<KnowledgeNoteDraft | null>(null);
   const [templateId, setTemplateId] = useState(knowledgeNoteTemplates[0].id);
   const [busy, setBusy] = useState(false);
   const loadingRef = useRef(false);
   const savingRef = useRef(false);
   const mounted = useRef(false);
-  const dirty = Boolean(draft && (draft.original
-    ? draft.title !== draft.original.title || draft.body !== draft.original.body || draft.needs_review !== draft.original.needs_review
-    : draft.title || draft.body || draft.needs_review));
+  const latestSaved = useRef<KnowledgeNote | null>(null);
+  const handledOpenRequest = useRef<KnowledgeNote | null>(null);
+  const dirty = knowledgeNoteDraftChanged(draft);
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  useEffect(() => {
+    latestSaved.current = savedNote || null;
+    if (savedNote) setNotes(current => mergeKnowledgeNote(current, savedNote));
+  }, [savedNote]);
+  useEffect(() => {
+    if (!openNoteRequest || handledOpenRequest.current === openNoteRequest) return;
+    // A saved-note shortcut must not discard a different note still being edited.
+    if (draft) { setError("編集中のノートが残っています。保存またはキャンセルすると、選んだノートを開きます。"); return; }
+    handledOpenRequest.current = openNoteRequest;
+    setNotes(current => mergeKnowledgeNote(current, openNoteRequest));
+    setOpenedId(openNoteRequest.id); setError(""); setMessage("");
+  }, [openNoteRequest, draft]);
   useEffect(() => { if (active && !loaded) void reload(); }, [active, loaded]);
   useEffect(() => { if (loaded) onCountChange?.(notes.length); }, [notes, loaded, onCountChange]);
   useEffect(() => {
@@ -38,15 +53,9 @@ export function KnowledgeNotesView({ active = true, onCountChange }: { active?: 
   async function reload() {
     if (loadingRef.current || savingRef.current) return;
     loadingRef.current = true; setLoading(true); setError("");
-    try { const rows = await loadKnowledgeNotes(); if (mounted.current) { setNotes(rows); setLoaded(true); } }
+    try { const rows = await loadKnowledgeNotes(); if (mounted.current) { setNotes(latestSaved.current ? mergeKnowledgeNote(rows, latestSaved.current) : rows); setLoaded(true); } }
     catch (failure) { if (mounted.current) setError(failure instanceof Error ? failure.message : "知識ノートを読み込めませんでした。再読み込みでお試しください。"); }
     finally { loadingRef.current = false; if (mounted.current) setLoading(false); }
-  }
-
-  function beginNew() {
-    if (savingRef.current || loadingRef.current) return;
-    setDraft({ id:crypto.randomUUID(), title:"", body:"", needs_review:false, expectedUpdatedAt:null, original:null });
-    setMessage(""); setError("");
   }
 
   function edit(note: KnowledgeNote) {
@@ -61,7 +70,7 @@ export function KnowledgeNotesView({ active = true, onCountChange }: { active?: 
   }
 
   function replaceSaved(note: KnowledgeNote) {
-    setNotes(current => [note, ...current.filter(item => item.id !== note.id)]);
+    setNotes(current => mergeKnowledgeNote(current, note));
   }
 
   async function save(event: React.FormEvent) {
@@ -94,23 +103,12 @@ export function KnowledgeNotesView({ active = true, onCountChange }: { active?: 
   return <section className="knowledge-notes" aria-label="知識ノート">
     {error && <div className="manual-feedback error" role="alert"><p>{error}</p>{!draft && openedId && <button type="button" className="edit-button" disabled={loading || busy} onClick={() => void reload()}>再読み込み</button>}</div>}
     {message && <p className="manual-feedback" role="status">{message}</p>}
-    {draft ? <form className="knowledge-editor" onSubmit={save}>
-      <div className="knowledge-heading"><h2>{draft.expectedUpdatedAt ? "知識ノートを編集" : "知識ノートを書く"}</h2><span className="knowledge-draft-state" role="status">{busy ? "保存中…" : dirty ? "未保存の変更があります" : draft.original ? "保存内容から変更なし" : "未保存のノートです"}</span></div>
-      <fieldset disabled={busy}>
-        <label>タイトル<input autoFocus value={draft.title} onChange={event => setDraft({ ...draft, title:event.target.value })} placeholder="例：used to の使い分け" maxLength={knowledgeNoteLimits.title} required /></label>
-        <div className="knowledge-template"><label>ひな形（任意）<select value={templateId} onChange={event => setTemplateId(event.target.value)}>{knowledgeNoteTemplates.map(template => <option key={template.id} value={template.id}>{template.label}</option>)}</select></label>
-          <button type="button" className="edit-button" onClick={() => setDraft({ ...draft, body:appendKnowledgeTemplate(draft.body, templateId) })}>ひな形を本文に追加</button><small>入力済みの内容は消さず、末尾に追加します。見出しは自由に変更・削除できます。</small></div>
-        <label>本文<textarea value={draft.body} onChange={event => setDraft({ ...draft, body:event.target.value })} rows={16} placeholder="日本語だけでもOK。文法の整理、表現の比較、調べたことなどを自由に記録できます。例文は必須ではありません。" maxLength={knowledgeNoteLimits.body} required /></label>
-        <label className="knowledge-flag"><input type="checkbox" checked={draft.needs_review} onChange={event => setDraft({ ...draft, needs_review:event.target.checked })} />あとで確認する</label>
-      </fieldset>
-      <p className="knowledge-help">保存ボタンで保存します。画面を切り替えても入力は残りますが、ページの再読み込みで未保存の入力は失われます。AI・翻訳APIは使いません。</p>
-      <div className="knowledge-actions"><button type="button" className="plain-action" disabled={busy} onClick={cancel}>キャンセル</button><button type="submit" className="primary-button" disabled={busy || !draft.title.trim() || !draft.body.trim() || !dirty}>{busy ? "保存中…" : "ノートを保存"}</button></div>
-    </form> : opened ? <article className="knowledge-reader">
+    {draft ? renderKnowledgeNoteEditor({ draft, dirty, busy, templateId, onDraftChange:setDraft, onTemplateChange:setTemplateId, onSubmit:save, onCancel:cancel }) : opened ? <article className="knowledge-reader">
       <div className="knowledge-actions"><button type="button" className="edit-button" disabled={busy} onClick={() => { setOpenedId(null); setMessage(""); }}>ノート一覧に戻る</button><button type="button" className="edit-button" disabled={busy} onClick={() => edit(opened)}>ノートを編集</button></div>
       <h2>{opened.title}</h2><div className="knowledge-meta"><time dateTime={opened.updated_at}>更新：{dateLabel(opened.updated_at)}</time><button type="button" className="knowledge-bookmark" aria-pressed={opened.needs_review} disabled={busy || loading} onClick={() => void toggleFlag(opened)}>{opened.needs_review ? "確認の目印を外す" : "あとで確認する"}</button></div>
       <p className="knowledge-body">{opened.body}</p>
     </article> : <>
-      <div className="knowledge-heading"><div><h2>知識ノート</h2><p>例文なしで、文法・使い分け・調べものをまとめられます。</p></div><button type="button" className="primary-button" disabled={!loaded || loading || busy} onClick={beginNew}>ノートを書く</button></div>
+      <div className="knowledge-heading"><div><h2>知識ノート</h2><p>例文なしで、文法・使い分け・調べものをまとめられます。</p></div><button type="button" className="primary-button" disabled={busy} onClick={onCreateNote}>ノートを書く</button></div>
       <div className="toolbar knowledge-toolbar"><input type="search" aria-label="知識ノートを検索" placeholder="タイトル・本文を検索" value={query} onChange={event => setQuery(event.target.value)} /><div className="filter-group"><button type="button" className={!reviewOnly ? "selected" : ""} aria-pressed={!reviewOnly} onClick={() => setReviewOnly(false)}>すべて {notes.length}</button><button type="button" className={reviewOnly ? "selected" : ""} aria-pressed={reviewOnly} onClick={() => setReviewOnly(true)}>あとで確認 {notes.filter(note => note.needs_review).length}</button></div><button type="button" className="edit-button" disabled={loading || busy} onClick={() => void reload()}>再読み込み</button></div>
       {loading && <p className="knowledge-help" role="status">知識ノートを読み込んでいます…</p>}
       {visible.length ? <div className="note-list">{visible.map(note => <article className="note-card knowledge-card" key={note.id}>

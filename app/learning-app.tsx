@@ -8,6 +8,8 @@ import { ActivityCalendar } from "./activity-calendar";
 import { WritingPracticeView } from "./writing-practice";
 import { SentenceLibraryView } from "./sentence-study";
 import { KnowledgeNotesView } from "./knowledge-notes";
+import { KnowledgeNoteEntryView } from "./knowledge-note-entry";
+import type { KnowledgeNote } from "./knowledge-notes-data";
 import { isReviewPreference, type SentenceStudyMetadata, type StudySentence } from "./sentence-study-data";
 import { sentenceSourceLabel } from "./manual-entry-data";
 import { isSavedTab, primaryTab, resolveTab, savedTabStorageKey, type SavedTab, type Tab } from "./navigation";
@@ -46,6 +48,9 @@ export function LearningApp() {
   const [reloadVersion, setReloadVersion] = useState(0);
   const [activityVersion, setActivityVersion] = useState(0);
   const [knowledgeNoteCount, setKnowledgeNoteCount] = useState(0);
+  const [entryKind, setEntryKind] = useState<"english" | "knowledge">("english");
+  const [savedKnowledgeNote, setSavedKnowledgeNote] = useState<KnowledgeNote | null>(null);
+  const [openKnowledgeNote, setOpenKnowledgeNote] = useState<KnowledgeNote | null>(null);
   const reviewSaving = useRef(false);
 
   useEffect(() => {
@@ -159,6 +164,19 @@ export function LearningApp() {
     history.replaceState(null, "", `${url.pathname}${url.search}`);
   }
 
+  function createKnowledgeNote() {
+    setEntryKind("knowledge"); selectTab("capture");
+  }
+
+  function recordCreatedKnowledgeNote(note: KnowledgeNote) {
+    setSavedKnowledgeNote(note); setKnowledgeNoteCount(count => count + 1);
+  }
+
+  function openSavedKnowledgeNote(note: KnowledgeNote) {
+    // A fresh request also reopens the same saved note after other navigation.
+    setOpenKnowledgeNote({ ...note }); selectTab("notes");
+  }
+
   if (connection === "checking") return <LoginGate checking />;
   if (connection === "setup") return <SetupGate onComplete={() => setConnection("signedout")} />;
   if (connection === "signedout") return <LoginGate />;
@@ -183,12 +201,14 @@ export function LearningApp() {
         </aside>
         <section className="content">
           {(tab === "organize" || tab === "settings" || tab === "writing") && <button className="menu-back" type="button" onClick={() => selectTab("menu")}>メニューに戻る</button>}
-          <div className="manual-entry-panel" hidden={tab !== "capture"}><ManualEntryView onSaved={() => setReloadVersion((version) => version + 1)} onOpenLibrary={() => selectTab("sentences")} onTranslation={(monthlyCharacters) => setUsage((current) => ({ ...current, cloudCharacters: monthlyCharacters }))} /></div>
+          <div hidden={tab !== "capture"}><PageHeading eyebrow="CREATE & SAVE" title="入力して保存" description="英文・訳、または知識ノートを選んで入力できます。" /><EntryKindNavigation value={entryKind} onSelect={setEntryKind} /></div>
+          <div className="manual-entry-panel" hidden={tab !== "capture" || entryKind !== "english"}><ManualEntryView showHeading={false} onSaved={() => setReloadVersion((version) => version + 1)} onOpenLibrary={() => selectTab("sentences")} onTranslation={(monthlyCharacters) => setUsage((current) => ({ ...current, cloudCharacters: monthlyCharacters }))} /></div>
+          <div className="knowledge-entry-panel" hidden={tab !== "capture" || entryKind !== "knowledge"}><KnowledgeNoteEntryView onSaved={recordCreatedKnowledgeNote} onOpenSaved={openSavedKnowledgeNote} /></div>
           <div className="writing-entry-panel" hidden={tab !== "writing"}><WritingPracticeView words={words} sentences={sentenceItems} onSaved={() => setReloadVersion((version) => version + 1)} onOpenLibrary={() => selectTab("sentences")} onEditSentence={(id) => setEditingSentence(sentenceItems.find(sentence => sentence.id === id) || null)} /></div>
           {isSavedTab(tab) && <SavedContentNavigation tab={tab} onSelect={selectTab} counts={{ sentences: sentenceItems.length, words: words.length, notes: noteCount }} />}
           {(tab === "today" || tab === "sentences" || tab === "words") && <div className="library-search"><label htmlFor="library-search">英文・語句・関連メモをまとめて検索</label><div><input id="library-search" type="search" placeholder="語句・英文・コアイメージ・メモ" value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} />{searchQuery && <button type="button" onClick={() => setSearchQuery("")}>検索を閉じる</button>}</div></div>}
           <div hidden={tab !== "sentences" || Boolean(searchQuery.trim())}><SentenceLibraryView active={tab === "sentences" && !searchQuery.trim()} sentences={sentenceItems} onEdit={setEditingSentence} onStudyUpdated={saveSentenceStudyMetadata} /></div>
-          <div hidden={tab !== "notes"}><NotesView active={tab === "notes"} words={words} sentences={sentenceItems} onEditWord={setEditingWord} onEditSentence={setEditingSentence} onKnowledgeCountChange={setKnowledgeNoteCount} /></div>
+          <div hidden={tab !== "notes"}><NotesView active={tab === "notes"} words={words} sentences={sentenceItems} onEditWord={setEditingWord} onEditSentence={setEditingSentence} onKnowledgeCountChange={setKnowledgeNoteCount} onCreateKnowledgeNote={createKnowledgeNote} savedKnowledgeNote={savedKnowledgeNote} openNoteRequest={openKnowledgeNote} /></div>
           {tab !== "capture" && tab !== "writing" && <>
           {searchQuery.trim() ? <SearchView words={words} sentences={sentenceItems} query={searchQuery} onEditWord={setEditingWord} onEditSentence={setEditingSentence} /> : <>
             {tab === "today" && <><ActivityCalendar refreshVersion={reloadVersion + activityVersion} /><TodayView words={words} reviewWord={reviewWord} revealed={revealed} completed={completed} remaining={reviewQueue.length} onReveal={() => setRevealed(true)} onAnswer={answerReview} /></>}
@@ -207,6 +227,13 @@ export function LearningApp() {
       {editingSentence && <SentenceEditor key={editingSentence.id} sentence={editingSentence} onClose={() => setEditingSentence(null)} onSave={saveSentenceEdit} />}
     </main>
   );
+}
+
+export function EntryKindNavigation({ value, onSelect }: { value: "english" | "knowledge"; onSelect: (value: "english" | "knowledge") => void }) {
+  return <div className="filter-group entry-kind-nav" role="group" aria-label="入力する内容">
+    <button type="button" className={value === "english" ? "selected" : ""} aria-pressed={value === "english"} onClick={() => onSelect("english")}>英文・訳</button>
+    <button type="button" className={value === "knowledge" ? "selected" : ""} aria-pressed={value === "knowledge"} onClick={() => onSelect("knowledge")}>知識ノート</button>
+  </div>;
 }
 
 export function PrimaryNavigation({ tab, lastSavedTab, onSelect, mobile = false }: { tab: Tab; lastSavedTab: SavedTab; onSelect: (tab: Tab) => void; mobile?: boolean }) {
@@ -261,8 +288,13 @@ function SearchView({ words, sentences, query, onEditWord, onEditSentence }: { w
 
 type NoteFilter = "all" | "core" | "word" | "sentence";
 
-export function NotesView({ words, sentences, onEditWord, onEditSentence, active = true, onKnowledgeCountChange }: { words: Word[]; sentences: Sentence[]; onEditWord: (word: Word) => void; onEditSentence: (sentence: Sentence) => void; active?: boolean; onKnowledgeCountChange?: (count: number) => void }) {
+export function NotesView({ words, sentences, onEditWord, onEditSentence, active = true, onKnowledgeCountChange, onCreateKnowledgeNote, savedKnowledgeNote, openNoteRequest }: {
+  words: Word[]; sentences: Sentence[]; onEditWord: (word: Word) => void; onEditSentence: (sentence: Sentence) => void;
+  active?: boolean; onKnowledgeCountChange?: (count: number) => void; onCreateKnowledgeNote: () => void;
+  savedKnowledgeNote?: KnowledgeNote | null; openNoteRequest?: KnowledgeNote | null;
+}) {
   const [section, setSection] = useState<"knowledge" | "attached">("knowledge");
+  useEffect(() => { if (openNoteRequest) setSection("knowledge"); }, [openNoteRequest]);
   const [filter, setFilter] = useState<NoteFilter>("all");
   const [query, setQuery] = useState("");
   const notes = [
@@ -278,7 +310,7 @@ export function NotesView({ words, sentences, onEditWord, onEditSentence, active
       <button type="button" className={section === "knowledge" ? "selected" : ""} aria-pressed={section === "knowledge"} onClick={() => setSection("knowledge")}>知識ノート</button>
       <button type="button" className={section === "attached" ? "selected" : ""} aria-pressed={section === "attached"} onClick={() => setSection("attached")}>英文・語句のメモ</button>
     </div>
-    <KnowledgeNotesView active={active && section === "knowledge"} onCountChange={onKnowledgeCountChange} />
+    <KnowledgeNotesView active={active && section === "knowledge"} onCountChange={onKnowledgeCountChange} onCreateNote={onCreateKnowledgeNote} savedNote={savedKnowledgeNote} openNoteRequest={openNoteRequest} />
     {active && section === "attached" && <><div className="toolbar"><input aria-label="学習メモを検索" placeholder="語句・英文・メモ本文を検索" value={query} onChange={(event) => setQuery(event.target.value)} /><div className="filter-group">{(["all", "core", "word", "sentence"] as const).map((value) => <button type="button" key={value} className={filter === value ? "selected" : ""} onClick={() => setFilter(value)}>{labels[value]}</button>)}</div></div>{visibleNotes.length ? <div className="note-list">{visibleNotes.map((note) => <article className={`note-card ${note.kind}`} key={note.id}><div className="note-card-heading"><div><span>{note.label}</span><h2>{note.title}</h2></div><button className="edit-button" type="button" onClick={note.edit}>編集</button></div><p className="note-body">{note.body}</p>{note.context && <p className="note-context">{note.context}</p>}</article>)}</div> : <div className="list-empty"><h2>表示できるメモがありません</h2><p>絞り込みを変えるか、語句や英文にメモを追加してください。</p></div>}</>}
   </>;
 }

@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { saveManualEntry, translateManualText } from "./supabase-browser";
 import type { CaptureResult, ManualTerm } from "./manual-entry-data";
 
-export function ManualEntryView({ onSaved, onOpenLibrary, onTranslation }: { onSaved: () => void; onOpenLibrary: () => void; onTranslation: (monthlyCharacters: number) => void }) {
+export function ManualEntryView({ onSaved, onOpenLibrary, onTranslation, showHeading = true }: { onSaved: () => void; onOpenLibrary: () => void; onTranslation: (monthlyCharacters: number) => void; showHeading?: boolean }) {
   const [english, setEnglish] = useState("");
   const [japanese, setJapanese] = useState("");
   const [note, setNote] = useState("");
@@ -86,7 +86,7 @@ export function ManualEntryView({ onSaved, onOpenLibrary, onTranslation }: { onS
   const duplicateCount = lastSaved?.terms.filter((term) => term.existing).length || 0;
 
   return <>
-    <div className="page-heading"><div><p className="eyebrow">ADD YOUR ENGLISH</p><h1>入力して保存</h1><p>他サイトの英文や、日常で使いたい英語を登録できます。</p></div></div>
+    {showHeading && <div className="page-heading"><div><p className="eyebrow">ADD YOUR ENGLISH</p><h1>入力して保存</h1><p>他サイトの英文や、日常で使いたい英語を登録できます。</p></div></div>}
     {lastSaved && <div className="manual-feedback" role="status"><span>直前の英文を保存しました。次の文を入力できます。{duplicateCount > 0 && `登録済みの語句 ${duplicateCount}件は登場回数を増やしました。${lastSaved.details_appending ? "異なる意味・コアイメージ・メモは区切り線付きで追記しました。同じ説明は重ねて追加しません。" : "既存の説明は保持しています。追記を有効にするにはSupabaseで0004のSQLを実行してください。"}`}</span><button className="plain-action" type="button" onClick={onOpenLibrary}>保存した英文を見る</button></div>}
     <form className="manual-entry" onSubmit={save}>
       <fieldset disabled={Boolean(busy)} className="manual-fields">

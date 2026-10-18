@@ -118,26 +118,32 @@ function themeContrast(first, second) {
   return (Math.max(...values) + .05) / (Math.min(...values) + .05);
 }
 
-async function knowledgeUiHarness() {
+async function knowledgeUiHarness({ entry = false } = {}) {
   const data = await loadTypeScriptModule("../app/knowledge-notes-data.ts", { Error });
-  const hooks = []; let cursor = 0; let effects = []; let tree; let sequence = 0; let confirmResult = false;
-  const requests = []; const events = new Map(); const counts = [];
+  const editor = await loadTypeScriptModule("../app/knowledge-note-editor.tsx", { require:name => name === "./knowledge-notes-data" ? data : nodeRequire(name) });
+  const hooks = []; let cursor = 0; let effects = []; let tree; let sequence = 0; let confirmResult = false; let props = {}; let creations = 0;
+  const requests = []; const events = new Map(); const counts = []; const saved = []; const opened = [];
   const react = {
     useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = typeof initial === "function" ? initial() : initial; return [hooks[slot], value => { hooks[slot] = typeof value === "function" ? value(hooks[slot]) : value; }]; },
     useRef(initial) { const slot = cursor++; return hooks[slot] ||= { current:initial }; },
     useEffect(effect, deps) { const slot = cursor++; const old = hooks[slot]; if (!old || deps.some((value, index) => !Object.is(value, old.deps[index]))) effects.push(() => { old?.cleanup?.(); hooks[slot] = { deps, cleanup:effect() }; }); },
   };
   const request = (kind, args) => new Promise((resolve, reject) => requests.push({ kind, args, resolve, reject }));
-  const ui = await loadTypeScriptModule("../app/knowledge-notes.tsx", {
+  const ui = await loadTypeScriptModule(entry ? "../app/knowledge-note-entry.tsx" : "../app/knowledge-notes.tsx", {
     Error, Intl, crypto:{ randomUUID:() => `new-note-${++sequence}` },
     window:{ confirm:() => confirmResult, addEventListener:(name, callback) => events.set(name, callback), removeEventListener:name => events.delete(name) },
-    require:name => name === "react" ? react : name === "./knowledge-notes-data" ? data : name === "./supabase-browser" ? {
+    require:name => name === "react" ? react : name === "./knowledge-notes-data" ? data : name === "./knowledge-note-editor" ? editor : name === "./supabase-browser" ? {
       loadKnowledgeNotes:() => request("load", []), saveKnowledgeNote:(...args) => request("save", args), setKnowledgeNoteReviewFlag:(...args) => request("flag", args),
     } : nodeRequire(name),
   });
   const nodes = node => Array.isArray(node) ? node.flatMap(nodes) : !node || typeof node !== "object" ? [] : [node, ...nodes(node.props?.children)];
   const onCountChange = count => counts.push(count);
-  return { requests, events, counts, render(active = true) { cursor = 0; effects = []; tree = ui.KnowledgeNotesView({ active, onCountChange }); effects.forEach(effect => effect()); return tree; },
+  return { requests, events, counts, saved, opened, creations:() => creations, render(active = true, nextProps = {}) {
+    props = { ...props, ...nextProps }; cursor = 0; effects = [];
+    tree = entry ? ui.KnowledgeNoteEntryView({ onSaved:note => saved.push(note), onOpenSaved:note => opened.push(note) })
+      : ui.KnowledgeNotesView({ active, onCountChange, onCreateNote:() => { creations++; }, ...props });
+    effects.forEach(effect => effect()); return entry && !active ? null : tree;
+  },
     html:() => renderToStaticMarkup(tree), nodes:() => nodes(tree), button:text => nodes(tree).find(node => node.type === "button" && node.props.children === text),
     field:label => nodes(nodes(tree).find(node => node.type === "label" && node.props.children[0] === label)).find(node => ["input", "textarea", "select"].includes(node.type)),
     submit() { return nodes(tree).find(node => node.type === "form").props.onSubmit({ preventDefault() {} }); },
@@ -146,38 +152,73 @@ async function knowledgeUiHarness() {
 
 test("knowledge UI loads only when opened, retries a missing table and keeps other learning views independent", async () => {
   const h = await knowledgeUiHarness(); assert.equal(h.render(false), null); assert.equal(h.requests.length, 0);
-  h.render(); assert.equal(h.requests.length, 1); assert.equal(h.button("ノートを書く").props.disabled, true);
+  h.render(); assert.equal(h.requests.length, 1); assert.equal(h.button("ノートを書く").props.disabled, false);
   h.requests[0].reject(new Error("Supabaseで0006_knowledge_notes.sqlを実行してください。他の復習は使えます。")); await h.flush(); h.render();
-  assert.match(h.html(), /0006_knowledge_notes.sql/); assert.equal(h.button("ノートを書く").props.disabled, true);
+  assert.match(h.html(), /0006_knowledge_notes.sql/); h.button("ノートを書く").props.onClick(); assert.equal(h.creations(), 1);
   h.button("再読み込み").props.onClick(); h.render(); assert.equal(h.requests.length, 2);
   h.requests[1].resolve([]); await h.flush(); h.render();
   assert.equal(h.button("ノートを書く").props.disabled, false); assert.match(h.html(), /知識ノートはまだありません/);
   assert.equal(h.counts.at(-1), 0);
 });
 
-test("knowledge editor preserves drafts and templates across failures and navigation, blocks double saves and reuses the note ID", async () => {
-  const h = await knowledgeUiHarness(); h.render(); h.requests[0].resolve([]); await h.flush(); h.render();
-  h.button("ノートを書く").props.onClick(); h.render();
+test("knowledge creation preserves a separate draft, clears only on success and opens the exact saved note without another API call", async () => {
+  const h = await knowledgeUiHarness({ entry:true }); h.render();
+  assert.equal(h.requests.length, 0, "the input screen does not fetch the library or use translation");
   h.field("タイトル").props.onChange({ target:{ value:"used to の違い" } }); h.render();
   h.field("本文").props.onChange({ target:{ value:"元の自分用メモ\n" } }); h.render();
   h.button("ひな形を本文に追加").props.onClick(); h.render();
-  assert.ok(h.field("本文").props.value.startsWith("元の自分用メモ\n")); assert.match(h.field("本文").props.value, /パターンと使い分け/);
   const body = h.field("本文").props.value;
+  assert.ok(body.startsWith("元の自分用メモ\n")); assert.match(body, /パターンと使い分け/);
   let warned = false; h.events.get("beforeunload")({ preventDefault() { warned = true; } }); assert.equal(warned, true);
-  assert.equal(h.render(false), null); h.render(); assert.equal(h.field("本文").props.value, body);
-  h.button("キャンセル").props.onClick(); h.render(); assert.equal(h.field("本文").props.value, body, "cancel requires explicit discard approval");
-  h.submit(); h.submit(); h.render(); assert.equal(h.requests.length, 2); assert.equal(h.requests[1].kind, "save");
-  h.requests[1].reject(new Error("通信エラー")); await h.flush(); h.render();
+  // The parent hides this form when the input kind or main page changes; it stays mounted.
+  h.render(false); h.render(); assert.equal(h.field("本文").props.value, body);
+  h.button("入力をクリア").props.onClick(); h.render(); assert.equal(h.field("本文").props.value, body);
+  h.submit(); h.submit(); h.render(); assert.equal(h.requests.length, 1);
+  h.requests[0].reject(new Error("通信エラー")); await h.flush(); h.render();
   assert.equal(h.field("本文").props.value, body); assert.match(h.html(), /通信エラー/);
-  h.submit(); assert.equal(h.requests[2].args[0], h.requests[1].args[0]); assert.equal(h.requests[2].args[2], null);
-  h.requests[2].resolve(knowledgeRow(h.requests[2].args[0], { title:"used to の違い", body })); await h.flush(); h.render();
-  assert.match(h.html(), /知識ノートを保存しました/); assert.ok(h.html().includes("元の自分用メモ")); assert.ok(h.button("ノートを編集"));
+  h.submit(); assert.equal(h.requests[1].args[0], h.requests[0].args[0]); assert.equal(h.requests[1].args[2], null);
+  const note = knowledgeRow(h.requests[1].args[0], { title:"used to の違い", body });
+  h.requests[1].resolve(note); await h.flush(); h.render();
+  assert.equal(h.field("タイトル").props.value, ""); assert.equal(h.field("本文").props.value, "");
+  assert.equal(h.saved.length, 1); assert.equal(h.saved[0].id, note.id);
+  h.button("保存したノートを見る").props.onClick(); assert.equal(h.opened[0].id, note.id); assert.equal(h.requests.length, 2);
   warned = false; h.events.get("beforeunload")({ preventDefault() { warned = true; } }); assert.equal(warned, false);
-  h.button("ノートを編集").props.onClick(); h.render();
-  h.field("本文").props.onChange({ target:{ value:body + "\n追記" } }); h.render(); h.submit();
-  assert.equal(h.requests[3].args[0], h.requests[2].args[0]); assert.equal(h.requests[3].args[2], "2026-10-18T01:00:00.000000Z");
-  h.requests[3].reject(new Error("別の画面で更新されています")); await h.flush(); h.render(); assert.equal(h.field("本文").props.value, body + "\n追記");
-  h.confirm(true); h.button("キャンセル").props.onClick(); h.render(); assert.ok(h.html().includes("元の自分用メモ"));
+  h.field("タイトル").props.onChange({ target:{ value:"次のノート" } }); h.render();
+  h.field("本文").props.onChange({ target:{ value:"別の本文" } }); h.render(); h.submit();
+  assert.notEqual(h.requests[2].args[0], note.id);
+  h.requests[2].reject(new Error("失敗")); await h.flush(); h.render();
+  assert.equal(h.field("本文").props.value, "別の本文"); h.confirm(true); h.button("入力をクリア").props.onClick(); h.render();
+  assert.equal(h.field("本文").props.value, "");
+});
+
+test("existing-note editing stays in the library, retains failed edits and queues saved-note navigation without discarding them", async () => {
+  const h = await knowledgeUiHarness(); h.render(); const original = knowledgeRow();
+  h.requests[0].resolve([original]); await h.flush(); h.render();
+  h.button("ノートを読む").props.onClick(); h.render(); h.button("ノートを編集").props.onClick(); h.render();
+  h.field("本文").props.onChange({ target:{ value:original.body + "\n追記" } }); h.render();
+  h.render(false); h.render(); assert.equal(h.field("本文").props.value, original.body + "\n追記");
+  h.submit(); h.submit(); assert.equal(h.requests.length, 2);
+  assert.equal(h.requests[1].args[0], original.id); assert.equal(h.requests[1].args[2], original.updated_at);
+  h.requests[1].reject(new Error("別の画面で更新されています")); await h.flush(); h.render();
+  assert.equal(h.field("本文").props.value, original.body + "\n追記");
+  const saved = knowledgeRow("newly-saved", { title:"新しく保存したノート" });
+  h.render(true, { savedNote:saved, openNoteRequest:saved }); h.render();
+  assert.match(h.html(), /編集中のノートが残っています/); assert.equal(h.field("本文").props.value, original.body + "\n追記");
+  h.confirm(true); h.button("キャンセル").props.onClick(); h.render(); h.render();
+  assert.match(h.html(), /新しく保存したノート/); assert.ok(h.button("ノートを編集"));
+  assert.equal(h.requests.length, 2, "opening a saved note must not save or translate again");
+});
+
+test("a note created during an in-flight library read stays visible and an older shortcut never replaces a newer edit", async () => {
+  const h = await knowledgeUiHarness(); h.render();
+  const saved = knowledgeRow("saved", { title:"保存直後のノート" });
+  h.render(false, { savedNote:saved }); h.requests[0].resolve([]); await h.flush(); h.render();
+  assert.match(h.html(), /保存直後のノート/); assert.equal(h.counts.at(-1), 1);
+  const data = await loadTypeScriptModule("../app/knowledge-notes-data.ts");
+  const newer = { ...saved, body:"後から編集した本文", updated_at:"2026-10-18T05:00:00Z" };
+  assert.equal(data.mergeKnowledgeNote([newer], saved)[0].body, newer.body);
+  h.button("ノートを書く").props.onClick(); assert.equal(h.creations(), 1);
+  assert.equal(h.requests.length, 1); assert.ok(!h.field("本文"), "the library shortcut must navigate instead of creating a second form");
 });
 
 test("knowledge list searches title and body, filters review flags and preserves the original note when a flag save fails", async () => {
@@ -202,7 +243,7 @@ test("knowledge list searches title and body, filters review flags and preserves
 
 test("learning memo sections keep the knowledge editor mounted and retain existing core, word and sentence memo actions", async () => {
   const hooks = []; let cursor = 0; const edits = [];
-  const react = { useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = initial; return [hooks[slot], value => { hooks[slot] = value; }]; } };
+  const react = { useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = initial; return [hooks[slot], value => { hooks[slot] = value; }]; }, useEffect() {} };
   const KnowledgeNotesView = () => createElement("div", { "data-knowledge-notes":true });
   const app = await loadTypeScriptModule("../app/learning-app.tsx", { require:name => name === "react" ? react : name === "./knowledge-notes" ? { KnowledgeNotesView } : name.startsWith(".") ? {} : nodeRequire(name) });
   const word = { id:"word", term:"used to", meaning:"意味", coreImage:"元のコアイメージ", note:"元の語句メモ" };
@@ -218,6 +259,54 @@ test("learning memo sections keep the knowledge editor mounted and retain existi
   assert.deepEqual(edits, ["word", "word", "sentence"]);
   assert.equal(nodes(render(false)).find(node => node.type === KnowledgeNotesView).props.active, false);
   assert.equal(word.coreImage, "元のコアイメージ"); assert.equal(sentence.note, "元の英文メモ");
+});
+
+test("the unified input hub routes both shortcuts to one creation screen and keeps both draft components mounted", async () => {
+  const navigation = await loadTypeScriptModule("../app/navigation.ts");
+  const hooks = []; let cursor = 0; let effects = []; let tree; const routes = [];
+  const react = {
+    useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = typeof initial === "function" ? initial() : initial; return [hooks[slot], value => { hooks[slot] = typeof value === "function" ? value(hooks[slot]) : value; }]; },
+    useRef(initial) { const slot = cursor++; return hooks[slot] ||= { current:initial }; },
+    useMemo(callback) { return callback(); },
+    useEffect(effect, deps) { const slot = cursor++; const old = hooks[slot]; if (!old || deps.some((value, index) => !Object.is(value, old.deps[index]))) effects.push(() => { old?.cleanup?.(); hooks[slot] = { deps, cleanup:effect() }; }); },
+  };
+  const ManualEntryView = () => null; const KnowledgeNoteEntryView = () => null; const KnowledgeNotesView = () => null;
+  const app = await loadTypeScriptModule("../app/learning-app.tsx", {
+    window:{ location:{ href:"https://example.test/?tab=capture", search:"?tab=capture" } },
+    history:{ replaceState:(_data, _unused, path) => routes.push(path) }, localStorage:{ getItem:() => null, setItem() {} },
+    require:name => name === "react" ? react : name === "./navigation" ? navigation
+      : name === "./manual-entry" ? { ManualEntryView } : name === "./knowledge-note-entry" ? { KnowledgeNoteEntryView }
+      : name === "./knowledge-notes" ? { KnowledgeNotesView } : name === "./organization" ? { countPendingOrganizationItems:() => 0 }
+      : name === "./supabase-browser" ? { getSupabaseConfiguration:() => ({}), captureSessionFromUrl:() => null, getStoredSession:() => ({}), loadLearningData:async () => ({ vocabulary:[], savedSentences:[], links:[], usage:{ cloud_translation_characters:0, ai_estimated_usd:0 } }) }
+      : name.startsWith(".") ? {} : nodeRequire(name),
+  });
+  const nodes = node => Array.isArray(node) ? node.flatMap(nodes) : !node || typeof node !== "object" ? [] : [node, ...nodes(node.props?.children)];
+  const render = () => { cursor = 0; effects = []; tree = app.LearningApp(); effects.forEach(effect => effect()); return nodes(tree); };
+  render(); await new Promise(resolve => setImmediate(resolve)); render();
+  const child = type => nodes(tree).find(node => node.type === type);
+  const wrapper = type => nodes(tree).find(node => node.type === "div" && node.props.children?.type === type);
+  assert.equal(wrapper(ManualEntryView).props.hidden, false); assert.equal(wrapper(KnowledgeNoteEntryView).props.hidden, true);
+  assert.equal(child(ManualEntryView).props.showHeading, false);
+  const chosen = []; const choice = app.EntryKindNavigation({ value:"english", onSelect:value => chosen.push(value) });
+  choice.props.children[1].props.onClick(); assert.deepEqual(chosen, ["knowledge"]);
+  const selectorHtml = renderToStaticMarkup(choice); assert.equal((selectorHtml.match(/<button /g) || []).length, 2);
+  assert.match(selectorHtml, /英文・訳/); assert.match(selectorHtml, /知識ノート/); assert.match(selectorHtml, /aria-pressed="true"/);
+  child(app.EntryKindNavigation).props.onSelect("knowledge"); render();
+  assert.equal(wrapper(ManualEntryView).props.hidden, true); assert.equal(wrapper(KnowledgeNoteEntryView).props.hidden, false);
+  const note = knowledgeRow(); child(KnowledgeNoteEntryView).props.onSaved(note); render();
+  assert.equal(child(app.NotesView).props.savedKnowledgeNote.id, note.id);
+  child(KnowledgeNoteEntryView).props.onOpenSaved(note); render();
+  assert.equal(routes.at(-1), "/?tab=notes"); assert.equal(child(app.NotesView).props.active, true);
+  assert.equal(child(app.NotesView).props.openNoteRequest.id, note.id);
+  assert.equal(wrapper(KnowledgeNoteEntryView).props.hidden, true); assert.ok(child(ManualEntryView));
+  child(app.NotesView).props.onCreateKnowledgeNote(); render();
+  assert.equal(routes.at(-1), "/?tab=capture"); assert.equal(child(app.EntryKindNavigation).props.value, "knowledge");
+  assert.equal(wrapper(KnowledgeNoteEntryView).props.hidden, false); assert.ok(child(ManualEntryView));
+  const editor = await readFile(new URL("../app/knowledge-note-editor.tsx", import.meta.url), "utf8");
+  const entry = await readFile(new URL("../app/knowledge-note-entry.tsx", import.meta.url), "utf8");
+  const library = await readFile(new URL("../app/knowledge-notes.tsx", import.meta.url), "utf8");
+  assert.match(editor, /<form className="knowledge-editor"/);
+  assert.ok([entry, library].every(source => source.includes("renderKnowledgeNoteEditor(") && !source.includes('<form className="knowledge-editor"')));
 });
 
 test("green dominant theme stays consistent across review, panel, launcher and settings", async () => {
