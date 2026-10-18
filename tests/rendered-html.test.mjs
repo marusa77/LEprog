@@ -9,6 +9,107 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const nodeRequire = createRequire(import.meta.url);
 
+const knowledgeRow = (id = "11111111-1111-4111-8111-111111111111", changes = {}) => ({ id, title:"used to の使い分け", body:"日本語だけの説明\n\n  インデントと末尾の改行も残す\n", needs_review:false, created_at:"2026-10-18T01:00:00.000000Z", updated_at:"2026-10-18T01:00:00.000000Z", ...changes });
+
+test("knowledge notes need only a title and body, preserve writing, append templates and search without changing source records", async () => {
+  const data = await loadTypeScriptModule("../app/knowledge-notes-data.ts", { Error });
+  const note = knowledgeRow();
+  const input = { title:` ${note.title} `, body:note.body, needs_review:true, status:"mastered", user_id:"not-allowed" };
+  assert.deepEqual(JSON.parse(JSON.stringify(data.validateKnowledgeNote(input))), { title:note.title, body:note.body, needs_review:true });
+  assert.throws(() => data.validateKnowledgeNote({ ...input, title:" " }), /タイトル/);
+  assert.throws(() => data.validateKnowledgeNote({ ...input, body:"\n\t " }), /本文/);
+  assert.throws(() => data.validateKnowledgeNote({ ...input, title:"あ".repeat(201) }), /200/);
+  assert.throws(() => data.validateKnowledgeNote({ ...input, body:"あ".repeat(50001) }), /50,000/);
+  for (const template of data.knowledgeNoteTemplates) {
+    assert.ok(data.appendKnowledgeTemplate(note.body, template.id).startsWith(note.body));
+    assert.ok(data.appendKnowledgeTemplate("", template.id).includes("【"));
+  }
+  assert.equal(data.appendKnowledgeTemplate(note.body, "unknown"), note.body);
+  const rows = [note, knowledgeRow("b", { title:"文法", body:"別の本文", needs_review:true, updated_at:"2026-10-18T02:00:00Z" })];
+  const snapshot = JSON.stringify(rows);
+  assert.deepEqual(Array.from(data.filterKnowledgeNotes(rows, " USED TO "), row => row.id), [note.id]);
+  assert.deepEqual(Array.from(data.filterKnowledgeNotes(rows, "インデント"), row => row.id), [note.id]);
+  assert.deepEqual(Array.from(data.filterKnowledgeNotes(rows, "", true), row => row.id), ["b"]);
+  assert.deepEqual(Array.from(data.filterKnowledgeNotes(rows, ""), row => row.id), ["b", note.id]);
+  assert.equal(JSON.stringify(rows), snapshot);
+});
+
+async function knowledgeApiHarness(responder) {
+  const data = await loadTypeScriptModule("../app/knowledge-notes-data.ts", { Error });
+  const calls = []; let signedIn = true;
+  const browser = await loadTypeScriptModule("../app/supabase-browser.ts", {
+    Error, window:{}, require:name => name === "./knowledge-notes-data" ? data : {},
+    localStorage:{ getItem:key => key === "phrase-nest-web-config" ? JSON.stringify({ projectUrl:"https://example.supabase.co", publishableKey:"test-key" }) : signedIn ? JSON.stringify({ access_token:"test-access", refresh_token:"test-refresh", expires_at:Math.floor(Date.now()/1000)+3600 }) : null },
+    fetch:async (url, init) => { const call = { url:new URL(url), init, body:init.body ? JSON.parse(init.body) : null }; calls.push(call); return responder(call, calls.length); },
+  });
+  return { browser, calls, signOut() { signedIn = false; } };
+}
+
+test("knowledge APIs page authenticated reads, keep saves idempotent and change only dedicated note fields", async () => {
+  const note = knowledgeRow(); let persisted = null; let loseResponse = true; let reads = 0;
+  const h = await knowledgeApiHarness(call => {
+    if (call.init.method === "POST") {
+      if (!persisted) { persisted = { ...note, ...call.body }; if (loseResponse) { loseResponse = false; throw new Error("通信が途切れました"); } }
+      return new Response("[]");
+    }
+    if (call.init.method === "PATCH") { persisted = { ...persisted, ...call.body, updated_at:"2026-10-18T02:00:00.000000Z" }; return new Response(JSON.stringify([persisted])); }
+    if (call.url.searchParams.has("id")) return new Response(JSON.stringify([persisted]));
+    reads++; return new Response(JSON.stringify(reads === 1 ? Array.from({ length:500 }, (_, i) => knowledgeRow(String(i))) : [note]));
+  });
+  assert.equal((await h.browser.loadKnowledgeNotes()).length, 501);
+  assert.equal(h.calls[1].url.searchParams.get("offset"), "500");
+  const input = { title:note.title, body:note.body, needs_review:false };
+  await assert.rejects(h.browser.saveKnowledgeNote(note.id, input, null), /通信/);
+  const saved = await h.browser.saveKnowledgeNote(note.id, input, null);
+  assert.equal(saved.id, note.id); assert.equal(saved.body, note.body);
+  const creations = h.calls.filter(call => call.init.method === "POST");
+  assert.equal(creations.length, 2); assert.deepEqual(creations[0].body, creations[1].body);
+  assert.match(creations[0].init.headers.Prefer, /ignore-duplicates/);
+  const edited = await h.browser.saveKnowledgeNote(note.id, { ...input, body:"修正した本文" }, saved.updated_at);
+  const patch = h.calls.at(-1); assert.equal(patch.url.searchParams.get("updated_at"), `eq.${saved.updated_at}`);
+  assert.deepEqual(Object.keys(patch.body).sort(), ["body", "needs_review", "title"]);
+  await h.browser.setKnowledgeNoteReviewFlag(edited, true);
+  assert.deepEqual(h.calls.at(-1).body, { needs_review:true });
+  for (const call of h.calls) {
+    assert.equal(call.init.headers.Authorization, "Bearer test-access");
+    assert.equal(call.url.pathname, "/rest/v1/knowledge_notes");
+    assert.ok(!call.body || !["user_id", "status", "next_review_at", "original_text", "translation"].some(key => key in call.body));
+  }
+  const count = h.calls.length; h.signOut(); await assert.rejects(h.browser.loadKnowledgeNotes(), /ログイン/); assert.equal(h.calls.length, count);
+});
+
+test("knowledge notes reject stale edits, retain current flags and explain a missing migration without touching learning data", async () => {
+  const latest = knowledgeRow(undefined, { body:"別端末で編集した本文", updated_at:"2026-10-18T02:00:00Z" });
+  const h = await knowledgeApiHarness(call => new Response(JSON.stringify(call.init.method ? [] : [latest])));
+  await assert.rejects(h.browser.saveKnowledgeNote(latest.id, { title:latest.title, body:"古い画面の入力", needs_review:false }, "old-timestamp"), /別の画面で更新/);
+  await assert.rejects(h.browser.setKnowledgeNoteReviewFlag(knowledgeRow(), true), /別の画面で更新/);
+  assert.equal(h.calls.filter(call => call.init.method === "PATCH").length, 2);
+  assert.ok(h.calls.every(call => call.url.pathname === "/rest/v1/knowledge_notes"));
+  const missing = await knowledgeApiHarness(() => new Response(JSON.stringify({ message:"Could not find the table 'public.knowledge_notes' in the schema cache" }), { status:404 }));
+  await assert.rejects(missing.browser.loadKnowledgeNotes(), /0006_knowledge_notes.sql.*他の保存内容や復習/);
+  const before = missing.calls.length;
+  await assert.rejects(missing.browser.saveKnowledgeNote(latest.id, { title:"", body:"説明", needs_review:false }, null), /タイトル/);
+  assert.equal(missing.calls.length, before);
+  const app = await readFile(new URL("../app/supabase-browser.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(app.slice(app.indexOf("export async function loadLearningData"), app.indexOf("export async function submitReview")), /knowledge_notes|loadKnowledgeNotes/);
+});
+
+test("knowledge SQL isolates owners, restricts editable columns and does not modify existing study content or schedules", async () => {
+  const sql = await readFile(new URL("../supabase/migrations/0006_knowledge_notes.sql", import.meta.url), "utf8");
+  assert.match(sql, /create table if not exists public\.knowledge_notes/i);
+  assert.match(sql, /user_id uuid not null default auth\.uid\(\)/i);
+  assert.match(sql, /alter table public\.knowledge_notes enable row level security/i);
+  assert.match(sql, /for select to authenticated using \(auth\.uid\(\) = user_id\)/i);
+  assert.match(sql, /for insert to authenticated with check \(auth\.uid\(\) = user_id\)/i);
+  assert.match(sql, /for update to authenticated using \(auth\.uid\(\) = user_id\) with check \(auth\.uid\(\) = user_id\)/i);
+  assert.match(sql, /revoke all on public\.knowledge_notes from public, anon, authenticated/i);
+  assert.match(sql, /grant insert \(id, title, body, needs_review\)/i);
+  assert.match(sql, /grant update \(title, body, needs_review\)/i);
+  assert.match(sql, /new\.updated_at := clock_timestamp\(\)/i);
+  assert.doesNotMatch(sql, /security definer|\bdelete from\b|\bdrop\b|\btruncate\b|for delete|grant (?:all|delete)/i);
+  assert.doesNotMatch(sql, /(?:alter table|update|insert into) public\.(?:sentences|vocabulary_items|review_logs|sentence_review_events)/i);
+});
+
 function themeContrast(first, second) {
   const luminance = hex => hex.slice(1).match(/../g).map(value => parseInt(value, 16) / 255)
     .map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4)
@@ -16,6 +117,108 @@ function themeContrast(first, second) {
   const values = [luminance(first), luminance(second)];
   return (Math.max(...values) + .05) / (Math.min(...values) + .05);
 }
+
+async function knowledgeUiHarness() {
+  const data = await loadTypeScriptModule("../app/knowledge-notes-data.ts", { Error });
+  const hooks = []; let cursor = 0; let effects = []; let tree; let sequence = 0; let confirmResult = false;
+  const requests = []; const events = new Map(); const counts = [];
+  const react = {
+    useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = typeof initial === "function" ? initial() : initial; return [hooks[slot], value => { hooks[slot] = typeof value === "function" ? value(hooks[slot]) : value; }]; },
+    useRef(initial) { const slot = cursor++; return hooks[slot] ||= { current:initial }; },
+    useEffect(effect, deps) { const slot = cursor++; const old = hooks[slot]; if (!old || deps.some((value, index) => !Object.is(value, old.deps[index]))) effects.push(() => { old?.cleanup?.(); hooks[slot] = { deps, cleanup:effect() }; }); },
+  };
+  const request = (kind, args) => new Promise((resolve, reject) => requests.push({ kind, args, resolve, reject }));
+  const ui = await loadTypeScriptModule("../app/knowledge-notes.tsx", {
+    Error, Intl, crypto:{ randomUUID:() => `new-note-${++sequence}` },
+    window:{ confirm:() => confirmResult, addEventListener:(name, callback) => events.set(name, callback), removeEventListener:name => events.delete(name) },
+    require:name => name === "react" ? react : name === "./knowledge-notes-data" ? data : name === "./supabase-browser" ? {
+      loadKnowledgeNotes:() => request("load", []), saveKnowledgeNote:(...args) => request("save", args), setKnowledgeNoteReviewFlag:(...args) => request("flag", args),
+    } : nodeRequire(name),
+  });
+  const nodes = node => Array.isArray(node) ? node.flatMap(nodes) : !node || typeof node !== "object" ? [] : [node, ...nodes(node.props?.children)];
+  const onCountChange = count => counts.push(count);
+  return { requests, events, counts, render(active = true) { cursor = 0; effects = []; tree = ui.KnowledgeNotesView({ active, onCountChange }); effects.forEach(effect => effect()); return tree; },
+    html:() => renderToStaticMarkup(tree), nodes:() => nodes(tree), button:text => nodes(tree).find(node => node.type === "button" && node.props.children === text),
+    field:label => nodes(nodes(tree).find(node => node.type === "label" && node.props.children[0] === label)).find(node => ["input", "textarea", "select"].includes(node.type)),
+    submit() { return nodes(tree).find(node => node.type === "form").props.onSubmit({ preventDefault() {} }); },
+    confirm(value) { confirmResult = value; }, flush:() => new Promise(resolve => setImmediate(resolve)) };
+}
+
+test("knowledge UI loads only when opened, retries a missing table and keeps other learning views independent", async () => {
+  const h = await knowledgeUiHarness(); assert.equal(h.render(false), null); assert.equal(h.requests.length, 0);
+  h.render(); assert.equal(h.requests.length, 1); assert.equal(h.button("ノートを書く").props.disabled, true);
+  h.requests[0].reject(new Error("Supabaseで0006_knowledge_notes.sqlを実行してください。他の復習は使えます。")); await h.flush(); h.render();
+  assert.match(h.html(), /0006_knowledge_notes.sql/); assert.equal(h.button("ノートを書く").props.disabled, true);
+  h.button("再読み込み").props.onClick(); h.render(); assert.equal(h.requests.length, 2);
+  h.requests[1].resolve([]); await h.flush(); h.render();
+  assert.equal(h.button("ノートを書く").props.disabled, false); assert.match(h.html(), /知識ノートはまだありません/);
+  assert.equal(h.counts.at(-1), 0);
+});
+
+test("knowledge editor preserves drafts and templates across failures and navigation, blocks double saves and reuses the note ID", async () => {
+  const h = await knowledgeUiHarness(); h.render(); h.requests[0].resolve([]); await h.flush(); h.render();
+  h.button("ノートを書く").props.onClick(); h.render();
+  h.field("タイトル").props.onChange({ target:{ value:"used to の違い" } }); h.render();
+  h.field("本文").props.onChange({ target:{ value:"元の自分用メモ\n" } }); h.render();
+  h.button("ひな形を本文に追加").props.onClick(); h.render();
+  assert.ok(h.field("本文").props.value.startsWith("元の自分用メモ\n")); assert.match(h.field("本文").props.value, /パターンと使い分け/);
+  const body = h.field("本文").props.value;
+  let warned = false; h.events.get("beforeunload")({ preventDefault() { warned = true; } }); assert.equal(warned, true);
+  assert.equal(h.render(false), null); h.render(); assert.equal(h.field("本文").props.value, body);
+  h.button("キャンセル").props.onClick(); h.render(); assert.equal(h.field("本文").props.value, body, "cancel requires explicit discard approval");
+  h.submit(); h.submit(); h.render(); assert.equal(h.requests.length, 2); assert.equal(h.requests[1].kind, "save");
+  h.requests[1].reject(new Error("通信エラー")); await h.flush(); h.render();
+  assert.equal(h.field("本文").props.value, body); assert.match(h.html(), /通信エラー/);
+  h.submit(); assert.equal(h.requests[2].args[0], h.requests[1].args[0]); assert.equal(h.requests[2].args[2], null);
+  h.requests[2].resolve(knowledgeRow(h.requests[2].args[0], { title:"used to の違い", body })); await h.flush(); h.render();
+  assert.match(h.html(), /知識ノートを保存しました/); assert.ok(h.html().includes("元の自分用メモ")); assert.ok(h.button("ノートを編集"));
+  warned = false; h.events.get("beforeunload")({ preventDefault() { warned = true; } }); assert.equal(warned, false);
+  h.button("ノートを編集").props.onClick(); h.render();
+  h.field("本文").props.onChange({ target:{ value:body + "\n追記" } }); h.render(); h.submit();
+  assert.equal(h.requests[3].args[0], h.requests[2].args[0]); assert.equal(h.requests[3].args[2], "2026-10-18T01:00:00.000000Z");
+  h.requests[3].reject(new Error("別の画面で更新されています")); await h.flush(); h.render(); assert.equal(h.field("本文").props.value, body + "\n追記");
+  h.confirm(true); h.button("キャンセル").props.onClick(); h.render(); assert.ok(h.html().includes("元の自分用メモ"));
+});
+
+test("knowledge list searches title and body, filters review flags and preserves the original note when a flag save fails", async () => {
+  const h = await knowledgeUiHarness(); h.render();
+  const note = knowledgeRow(undefined, { body:"比較したいコアイメージ\n<script>not executable</script>", needs_review:false });
+  h.requests[0].resolve([note, knowledgeRow("second", { title:"別のノート", body:"別の説明", needs_review:true })]); await h.flush(); h.render();
+  const search = () => h.nodes().find(node => node.props?.["aria-label"] === "知識ノートを検索");
+  search().props.onChange({ target:{ value:"比較したい" } }); h.render();
+  assert.ok(h.html().includes(note.title)); assert.ok(!h.html().includes("別のノート"));
+  assert.match(h.html(), /&lt;script&gt;/); assert.doesNotMatch(h.html(), /<script>/);
+  h.button("ノートを読む").props.onClick(); h.render(); assert.ok(h.html().includes("not executable"));
+  h.button("あとで確認する").props.onClick(); h.button("あとで確認する").props.onClick(); h.render();
+  assert.equal(h.requests.length, 2); assert.equal(h.requests[1].kind, "flag");
+  h.requests[1].reject(new Error("保存に失敗")); await h.flush(); h.render(); assert.ok(h.button("あとで確認する"));
+  h.button("あとで確認する").props.onClick(); h.requests[2].resolve({ ...note, needs_review:true }); await h.flush(); h.render();
+  assert.ok(h.button("確認の目印を外す")); h.button("ノート一覧に戻る").props.onClick(); h.render();
+  search().props.onChange({ target:{ value:"" } }); h.render();
+  h.nodes().find(node => node.type === "button" && Array.isArray(node.props.children) && node.props.children[0] === "あとで確認 ").props.onClick(); h.render();
+  assert.equal(h.nodes().filter(node => node.props?.className === "knowledge-title").length, 2);
+  assert.match(h.html(), /knowledge-preview/); assert.equal(h.requests.length, 3);
+});
+
+test("learning memo sections keep the knowledge editor mounted and retain existing core, word and sentence memo actions", async () => {
+  const hooks = []; let cursor = 0; const edits = [];
+  const react = { useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = initial; return [hooks[slot], value => { hooks[slot] = value; }]; } };
+  const KnowledgeNotesView = () => createElement("div", { "data-knowledge-notes":true });
+  const app = await loadTypeScriptModule("../app/learning-app.tsx", { require:name => name === "react" ? react : name === "./knowledge-notes" ? { KnowledgeNotesView } : name.startsWith(".") ? {} : nodeRequire(name) });
+  const word = { id:"word", term:"used to", meaning:"意味", coreImage:"元のコアイメージ", note:"元の語句メモ" };
+  const sentence = { id:"sentence", source:"An example.", translation:"例文", note:"元の英文メモ" };
+  const props = { words:[word], sentences:[sentence], onEditWord:value => edits.push(value.id), onEditSentence:value => edits.push(value.id) };
+  const nodes = node => Array.isArray(node) ? node.flatMap(nodes) : !node || typeof node !== "object" ? [] : [node, ...nodes(node.props?.children)];
+  const render = active => { cursor = 0; return app.NotesView({ ...props, active }); };
+  let tree = render(true); assert.equal(nodes(tree).find(node => node.type === KnowledgeNotesView).props.active, true);
+  nodes(tree).find(node => node.type === "button" && node.props.children === "英文・語句のメモ").props.onClick(); tree = render(true);
+  assert.equal(nodes(tree).find(node => node.type === KnowledgeNotesView).props.active, false);
+  const html = renderToStaticMarkup(tree); assert.match(html, /元のコアイメージ/); assert.match(html, /元の語句メモ/); assert.match(html, /元の英文メモ/);
+  for (const button of nodes(tree).filter(node => node.type === "button" && node.props.children === "編集")) button.props.onClick();
+  assert.deepEqual(edits, ["word", "word", "sentence"]);
+  assert.equal(nodes(render(false)).find(node => node.type === KnowledgeNotesView).props.active, false);
+  assert.equal(word.coreImage, "元のコアイメージ"); assert.equal(sentence.note, "元の英文メモ");
+});
 
 test("green dominant theme stays consistent across review, panel, launcher and settings", async () => {
   const paths = ["app/globals.css", "extension/panel.css", "extension/launcher.css", "extension/options.css"];
@@ -603,7 +806,7 @@ test("ships the extension and cloud schema", async () => {
   assert.match(contentScript, /function openLauncher/);
   assert.match(contentScript, /保存後の変更あり/);
   assert.match(contentScript, /phraseNestPanelPreferences/);
-  assert.match(learningApp, /保存内容をまとめて検索/);
+  assert.match(learningApp, /英文・語句・関連メモをまとめて検索/);
   assert.match(learningApp, /function SearchView/);
   assert.match(learningApp, /よく出会う（3回以上）/);
   assert.match(contentScript, /保存内容/);
