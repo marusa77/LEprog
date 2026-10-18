@@ -267,6 +267,7 @@ test("sentence study SQL isolates users, counts retries once and never rewrites 
 
 async function sentenceStudyHarness(initialSentences) {
   const data = await loadTypeScriptModule("../app/sentence-study-data.ts");
+  const notes = await loadTypeScriptModule("../app/sentence-note.tsx", { require:nodeRequire });
   const hooks = []; let cursor = 0; let sentences = initialSentences; let tree; let tokens = 0;
   const requests = [];
   const react = {
@@ -275,7 +276,7 @@ async function sentenceStudyHarness(initialSentences) {
   };
   const ui = await loadTypeScriptModule("../app/sentence-study.tsx", {
     Error, crypto:{ randomUUID:() => `review-token-${++tokens}` },
-    require:name => name === "react" ? react : name === "./sentence-study-data" ? data : name === "./supabase-browser" ? {
+    require:name => name === "react" ? react : name === "./sentence-note" ? notes : name === "./sentence-study-data" ? data : name === "./supabase-browser" ? {
       submitSentenceReview(id, token) { return new Promise((resolve, reject) => requests.push({ kind:"review", id, token, resolve, reject })); },
       updateSentenceReviewPreference(id, preference) { return new Promise((resolve, reject) => requests.push({ kind:"preference", id, preference, resolve, reject })); },
     } : nodeRequire(name),
@@ -288,6 +289,93 @@ async function sentenceStudyHarness(initialSentences) {
     select:label => nodes(tree).find(node => node.type === "select" && node.props["aria-label"] === label), html:() => renderToStaticMarkup(tree),
     getSentences:() => sentences, setSentences(value) { sentences = value; } };
 }
+
+async function sentenceNoteHarness(initialNote, { resizeObserver = true } = {}) {
+  const hooks = []; let cursor = 0; let tree; let note = initialNote; let observed; let disconnected = false;
+  let lineHeight = 28.8; let writes = 0; let fontsReady;
+  const effects = []; const events = new Map();
+  const element = { clientWidth:600, scrollHeight:57.6 };
+  const react = {
+    useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = initial; return [hooks[slot], value => { writes++; hooks[slot] = typeof value === "function" ? value(hooks[slot]) : value; }]; },
+    useRef(initial) { const slot = cursor++; return hooks[slot] ||= { current:initial }; },
+    useId() { const slot = cursor++; return hooks[slot] ||= `note-${slot}`; },
+    useEffect(effect, deps) { const slot = cursor++; if (!hooks[slot] || deps.some((dep, index) => dep !== hooks[slot].deps[index])) effects.push(() => { hooks[slot]?.cleanup?.(); hooks[slot] = { deps, cleanup:effect() }; }); },
+  };
+  const ui = await loadTypeScriptModule("../app/sentence-note.tsx", {
+    require:name => name === "react" ? react : nodeRequire(name),
+    window:{ getComputedStyle:() => ({ lineHeight:String(lineHeight) }), addEventListener:(type, handler) => events.set(type, handler), removeEventListener:type => events.delete(type) },
+    document:{ fonts:{ ready:new Promise(resolve => { fontsReady = resolve; }) } },
+    ResizeObserver:resizeObserver ? class { constructor(callback) { observed = callback; } observe(target) { assert.equal(target, element); } disconnect() { disconnected = true; } } : undefined,
+  });
+  function render(nextNote = note) {
+    note = nextNote; cursor = 0; tree = ui.SentenceNote({ note });
+    tree.props.children[0].props.ref.current = element;
+    for (const effect of effects.splice(0)) effect();
+    return tree;
+  }
+  return { render, element, events, fontsReady, resize(height, width = element.clientWidth, fontLineHeight = lineHeight) {
+    element.scrollHeight = height; element.clientWidth = width; lineHeight = fontLineHeight;
+    (observed || events.get("resize"))?.();
+  }, button:() => tree.props.children[1], text:() => tree.props.children[0], html:() => renderToStaticMarkup(tree),
+  unmount() { for (const hook of hooks) hook?.cleanup?.(); }, disconnected:() => disconnected, writes:() => writes };
+}
+
+test("only overflowing sentence notes offer an accessible three-line preview toggle without losing any text", async () => {
+  const note = "先頭の説明\n\nコアイメージの補足".repeat(30) + "\n末尾もそのまま残す";
+  const h = await sentenceNoteHarness(note); h.render(); h.render();
+  assert.equal(h.button(), false, "short rendered notes need no extra button");
+  h.resize(400); h.render();
+  assert.equal(h.button().props.children, "続きを読む"); assert.equal(h.button().props.type, "button");
+  assert.equal(h.button().props["aria-expanded"], false);
+  assert.equal(h.button().props["aria-controls"], h.text().props.id);
+  assert.match(h.text().props.className, /collapsed/);
+  assert.equal(h.text().props.children[1], note, "never slice or rewrite the original explanation");
+  h.button().props.onClick(); h.render();
+  assert.equal(h.button().props["aria-expanded"], true); assert.equal(h.button().props.children, "折りたたむ");
+  assert.doesNotMatch(h.text().props.className, /collapsed/); assert.ok(h.html().includes("末尾もそのまま残す"));
+  h.button().props.onClick(); h.render(); assert.match(h.text().props.className, /collapsed/);
+  assert.equal(h.text().props.children[1], note);
+  h.resize(86); h.render(); assert.equal(h.button(), false, "exactly three lines stay fully visible");
+  h.resize(115.2); h.render(); assert.equal(h.button().props.children, "続きを読む", "four explicit or wrapped lines can open");
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(css, /\.sentence-note-text\.collapsed\s*\{[^}]*-webkit-line-clamp:3[^}]*max-height:5\.4em[^}]*overflow:hidden/);
+  assert.match(css, /\.sentence-note \.sentence-note-text\s*\{[^}]*white-space:pre-wrap[^}]*overflow-wrap:anywhere/);
+  assert.match(css, /\.sentence-note-toggle\s*\{[^}]*min-height:44px/);
+});
+
+test("note previews remeasure widths, larger text and edited notes, and clean up observers and font callbacks", async () => {
+  const h = await sentenceNoteHarness("説明"); h.render();
+  h.resize(144, 320); h.render(); assert.equal(h.button().props["aria-expanded"], false);
+  h.resize(57.6, 900); h.render(); assert.equal(h.button(), false);
+  h.resize(129.6, 320, 32.4); h.render(); assert.equal(h.button().props.children, "続きを読む");
+  h.button().props.onClick(); h.render(); h.render("編集後の説明\n追記も消えない"); h.render();
+  assert.equal(h.button().props["aria-expanded"], true, "editing does not collapse an open explanation");
+  assert.equal(h.text().props.children[1], "編集後の説明\n追記も消えない");
+  h.element.scrollHeight = 32; h.fontsReady(); await Promise.resolve(); h.render(); assert.equal(h.button(), false);
+  h.unmount(); assert.equal(h.disconnected(), true);
+  const writes = h.writes(); h.resize(500); assert.equal(h.writes(), writes);
+  const late = await sentenceNoteHarness("遅れて読み込まれるフォント"); late.render(); late.unmount();
+  const before = late.writes(); late.fontsReady(); await Promise.resolve(); assert.equal(late.writes(), before);
+  const fallback = await sentenceNoteHarness("説明", { resizeObserver:false }); fallback.render();
+  assert.equal(fallback.events.has("resize"), true); fallback.resize(200); fallback.render(); assert.equal(fallback.button().props.children, "続きを読む");
+  fallback.unmount(); assert.equal(fallback.events.size, 0);
+});
+
+test("sentence lists preview long notes but round review reveals full notes in one step without recording a review", async () => {
+  const note = "長い説明\n".repeat(100) + "最後の説明";
+  const h = await sentenceStudyHarness([studySentence("a", { note })]); h.render();
+  assert.equal(h.nodes().filter(node => node.type?.name === "SentenceNote").length, 1);
+  assert.ok(h.html().includes("最後の説明")); assert.match(h.html(), /sentence-note-text collapsed/);
+  h.select("英文の並び順").props.onChange({ target:{ value:"random" } }); h.render();
+  assert.equal(h.nodes().filter(node => node.type?.name === "SentenceNote").length, 1);
+  h.button("英文を1件復習").props.onClick(); h.render(); assert.ok(!h.html().includes("最後の説明"));
+  h.button("訳・メモを見る").props.onClick(); h.render();
+  assert.ok(h.html().includes("最後の説明")); assert.doesNotMatch(h.html(), /sentence-note-text|sentence-note-toggle/);
+  assert.equal(h.requests.length, 0); assert.equal(h.getSentences()[0].note, note);
+  h.button("一覧に戻る").props.onClick(); h.render(); assert.match(h.html(), /sentence-note-text collapsed/);
+  const empty = await sentenceStudyHarness([studySentence("empty", { note:"" })]); empty.render();
+  assert.equal(empty.nodes().filter(node => node.type?.name === "SentenceNote").length, 0);
+});
 
 test("sentence UI keeps a failed review in place, blocks double clicks, and retries with the same ID", async () => {
   const h = await sentenceStudyHarness([studySentence("a")]); h.render();
