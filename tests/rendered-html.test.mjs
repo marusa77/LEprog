@@ -9,6 +9,48 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 const nodeRequire = createRequire(import.meta.url);
 
+function themeContrast(first, second) {
+  const luminance = hex => hex.slice(1).match(/../g).map(value => parseInt(value, 16) / 255)
+    .map(value => value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4)
+    .reduce((sum, value, index) => sum + value * [.2126, .7152, .0722][index], 0);
+  const values = [luminance(first), luminance(second)];
+  return (Math.max(...values) + .05) / (Math.min(...values) + .05);
+}
+
+test("green dominant theme stays consistent across review, panel, launcher and settings", async () => {
+  const paths = ["app/globals.css", "extension/panel.css", "extension/launcher.css", "extension/options.css"];
+  const palettes = await Promise.all(paths.map(async path => {
+    const css = await readFile(new URL(`../${path}`, import.meta.url), "utf8");
+    const tokens = Object.fromEntries([...css.matchAll(/--([a-z-]+):\s*(#[0-9a-f]{6})\s*;/g)].map(match => [match[1], match[2]]));
+    assert.match(css, /outline:\s*3px solid var\(--focus\)/, path);
+    assert.doesNotMatch(css, /Georgia|Yu Mincho|#f6f4ed|#fffdf8|#f1efe7/, path);
+    assert.equal(tokens.green, "#326b50", path);
+    assert.equal(tokens.paper, "#f0f5f1", path);
+    assert.notEqual(tokens.amber, tokens.green, "warnings must remain distinguishable");
+    assert.notEqual(tokens.rose, tokens.green, "errors must remain distinguishable");
+    return tokens;
+  }));
+  for (const tokens of palettes.slice(1)) assert.deepEqual(tokens, palettes[0]);
+});
+
+test("theme text and keyboard focus have readable contrast on their paired surfaces", async () => {
+  const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
+  const tokens = Object.fromEntries([...css.matchAll(/--([a-z-]+):\s*(#[0-9a-f]{6})\s*;/g)].map(match => [match[1], match[2]]));
+  for (const foreground of ["ink", "muted", "green", "green-dark"]) {
+    for (const background of ["paper", "surface", "surface-soft", "mint"]) {
+      assert.ok(themeContrast(tokens[foreground], tokens[background]) >= 4.5, `${foreground} / ${background}`);
+    }
+  }
+  for (const background of ["green", "green-dark"]) assert.ok(themeContrast("#ffffff", tokens[background]) >= 4.5);
+  assert.ok(themeContrast(tokens.amber, tokens["amber-soft"]) >= 4.5);
+  assert.ok(themeContrast(tokens.rose, tokens["rose-soft"]) >= 4.5);
+  for (const background of ["paper", "surface", "surface-soft", "mint"]) {
+    assert.ok(themeContrast(tokens.focus, tokens[background]) >= 3, `focus / ${background}`);
+  }
+  assert.ok(themeContrast(tokens["line-strong"], "#ffffff") >= 3, "editable field boundaries");
+  assert.match(css, /:is\(button,a,input,textarea,select,summary\):focus-visible/);
+});
+
 test("calendar cells stay square and weekday labels track their responsive row height", async () => {
   const css = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const buttonRule = css.match(/\.activity-week button\s*\{([^}]*)\}/)?.[1];
@@ -669,7 +711,7 @@ test("copy buttons use the current sentence and do not replace drag or double-cl
 
 test("page capture uses temporary access without automatic scripts or all-site read permissions", async () => {
   const manifest = JSON.parse(await readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"));
-  assert.equal(manifest.version, "0.9.4");
+  assert.equal(manifest.version, "0.9.5");
   assert.ok(manifest.permissions.includes("activeTab")); assert.ok(manifest.permissions.includes("scripting"));
   assert.deepEqual(manifest.host_permissions, ["https://*.supabase.co/*"]);
   assert.equal(manifest.content_scripts, undefined);

@@ -81,5 +81,5 @@ async function verifyGoogleProvider(url, key) {
 
 document.querySelector("#logout").addEventListener("click", async () => { await chrome.storage.local.remove("phraseNestSession"); showSession(false); setMessage("ログアウトしました"); });
 function showSession(active) { signedOut.hidden = active; signedIn.hidden = !active; }
-function setMessage(text, error = false) { message.textContent = text; message.style.color = error ? "#a4473e" : "#1f654f"; }
-function setConfigMessage(text, error = false) { configMessage.textContent = text; configMessage.style.color = error ? "#a4473e" : "#1f654f"; }
+function setMessage(text, error = false) { message.textContent = text; message.style.color = error ? "var(--rose)" : "var(--green)"; }
+function setConfigMessage(text, error = false) { configMessage.textContent = text; configMessage.style.color = error ? "var(--rose)" : "var(--green)"; }
