@@ -2,6 +2,7 @@
 
 import { useRef, useState } from "react";
 import { submitSentenceReview, updateSentenceReviewPreference } from "./supabase-browser";
+import { SentenceNote } from "./sentence-note";
 import { orderStudySentences, retainSentenceOrder, reviewPreferenceLabels, sentenceStudySummary, type ReviewPreference, type SentenceOrder, type SentenceStudyMetadata, type StudySentence } from "./sentence-study-data";
 
 type Round = { ids: string[]; index: number; completed: number; skipped: number };
@@ -78,9 +79,9 @@ export function SentenceLibraryView({ sentences, onEdit, onStudyUpdated, active 
     </select>
   </label>;
 
-  const details = (sentence: StudySentence) => <>
+  const details = (sentence: StudySentence, previewNote = false) => <>
     <p className="translation">{sentence.translation || "訳はまだありません"}</p>
-    {sentence.note && <p className="personal-note">メモ：{sentence.note}</p>}
+    {sentence.note && (previewNote ? <SentenceNote note={sentence.note} /> : <p className="personal-note">メモ：{sentence.note}</p>)}
     <div className="term-tags">{sentence.terms.map(term => <span key={term}>{term}</span>)}</div>
     {sentence.sourceUrl && /^https?:\/\//i.test(sentence.sourceUrl) && <p className="sentence-origin-link"><a href={sentence.sourceUrl} target="_blank" rel="noopener noreferrer">元のページを開く</a></p>}
   </>;
@@ -118,7 +119,7 @@ export function SentenceLibraryView({ sentences, onEdit, onStudyUpdated, active 
           </article> : <div className="list-empty"><p>この英文は現在の保存内容にありません。</p><button className="edit-button" type="button" onClick={skip}>次へ</button></div>}
       </section> : <div className="sentence-list">{ordered.map(sentence => <article className="sentence-card" key={sentence.id}>
         <div className="sentence-meta"><span>{sentence.community}</span><div><time>{sentence.savedAt}</time><button className="edit-button" type="button" disabled={busyId !== null} onClick={() => onEdit(sentence)}>編集</button></div></div>
-        <h2>{sentence.source}</h2>{details(sentence)}
+        <h2>{sentence.source}</h2>{details(sentence, true)}
         <div className="sentence-study-footer">{preferenceControl(sentence)}{sentence.reviewReady && <small>{sentenceStudySummary(sentence)}</small>}</div>
       </article>)}</div>}
     </>}

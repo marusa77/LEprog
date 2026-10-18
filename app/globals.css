@@ -150,6 +150,10 @@ button:disabled { cursor:default; }
 @media(max-width:900px) { .writing-selected { grid-template-columns:1fr; } }
 @media(max-width:620px) { .writing-card { padding:18px 15px; }.writing-word-list { grid-template-columns:1fr; }.writing-card-heading .primary-button { width:100%; }.writing-notice { padding:13px 15px; } }
 .sentence-study-controls { display:flex; align-items:center; flex-wrap:wrap; gap:12px; margin:20px 0 10px; }
+.sentence-note .sentence-note-text { margin:0; font:inherit; line-height:1.8; white-space:pre-wrap; overflow-wrap:anywhere; }
+.sentence-note-text.collapsed { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:3; max-height:5.4em; overflow:hidden; }
+.sentence-note-toggle { display:block; min-height:44px; margin-top:8px; padding:8px 0; border:0; border-radius:5px; background:transparent; color:var(--green-dark); font-size:.875rem; font-weight:650; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
+.sentence-note-toggle:hover { color:var(--green); }
 .sentence-study-controls label,.sentence-preference { display:flex; align-items:center; gap:8px; font-size:.85rem; color:var(--muted); }
 .sentence-study-controls select,.sentence-preference select { padding:8px 10px; border:1px solid var(--line); border-radius:8px; background:var(--surface); color:var(--ink); font:inherit; min-height:40px; }
 .sentence-round-start { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-left:auto; }
