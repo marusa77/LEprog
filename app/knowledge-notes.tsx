@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { loadKnowledgeNotes, saveKnowledgeNote, setKnowledgeNoteReviewFlag } from "./supabase-browser";
 import { filterKnowledgeNotes, knowledgeNoteDraftChanged, knowledgeNoteTemplates, mergeKnowledgeNote, type KnowledgeNote, type KnowledgeNoteDraft } from "./knowledge-notes-data";
 import { renderKnowledgeNoteEditor } from "./knowledge-note-editor";
+import { ActivityReviewButton } from "./activity-review-button";
 
 const dateLabel = (value: string) => new Intl.DateTimeFormat("ja-JP", { year:"numeric", month:"short", day:"numeric", timeZone:"Asia/Tokyo" }).format(new Date(value));
 
@@ -107,6 +108,7 @@ export function KnowledgeNotesView({ active = true, onCountChange, onCreateNote,
       <div className="knowledge-actions"><button type="button" className="edit-button" disabled={busy} onClick={() => { setOpenedId(null); setMessage(""); }}>ノート一覧に戻る</button><button type="button" className="edit-button" disabled={busy} onClick={() => edit(opened)}>ノートを編集</button></div>
       <h2>{opened.title}</h2><div className="knowledge-meta"><time dateTime={opened.updated_at}>更新：{dateLabel(opened.updated_at)}</time><button type="button" className="knowledge-bookmark" aria-pressed={opened.needs_review} disabled={busy || loading} onClick={() => void toggleFlag(opened)}>{opened.needs_review ? "確認の目印を外す" : "あとで確認する"}</button></div>
       <p className="knowledge-body">{opened.body}</p>
+      <ActivityReviewButton key={opened.id} source="knowledge" id={opened.id} />
     </article> : <>
       <div className="knowledge-heading"><div><h2>知識ノート</h2><p>例文なしで、文法・使い分け・調べものをまとめられます。</p></div><button type="button" className="primary-button" disabled={busy} onClick={onCreateNote}>ノートを書く</button></div>
       <div className="toolbar knowledge-toolbar"><input type="search" aria-label="知識ノートを検索" placeholder="タイトル・本文を検索" value={query} onChange={event => setQuery(event.target.value)} /><div className="filter-group"><button type="button" className={!reviewOnly ? "selected" : ""} aria-pressed={!reviewOnly} onClick={() => setReviewOnly(false)}>すべて {notes.length}</button><button type="button" className={reviewOnly ? "selected" : ""} aria-pressed={reviewOnly} onClick={() => setReviewOnly(true)}>あとで確認 {notes.filter(note => note.needs_review).length}</button></div><button type="button" className="edit-button" disabled={loading || busy} onClick={() => void reload()}>再読み込み</button></div>

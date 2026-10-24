@@ -112,6 +112,7 @@ async function openTranslator() {
   setPanelMessage("Google翻訳を利用できないため、無料の端末内翻訳へ切り替えています…");
   const localResult = await translateLocally(selectedPageText);
   if (localResult.translation) {
+    recordLocalLookup();
     root.querySelector("#pn-translation").value = localResult.translation;
     resizeLongTextarea(root.querySelector("#pn-translation"));
     root.querySelector("#pn-provider").textContent = "端末内翻訳 · ¥0";
@@ -575,8 +576,9 @@ async function requestCloudTranslation(texts) {
 }
 
 function formatCloudUsage(result) {
-  if (typeof result.monthlyCharacters !== "number") return `Google翻訳 · ${result.characters}文字`;
-  return `Google翻訳 · 今月 ${result.monthlyCharacters.toLocaleString()}/${result.monthlyLimit.toLocaleString()}文字`;
+  const warning = result.activityRecorded === false ? " · 学習記録は未反映（接続・0007のSQLを確認）" : "";
+  if (typeof result.monthlyCharacters !== "number") return `Google翻訳 · ${result.characters}文字${warning}`;
+  return `Google翻訳 · 今月 ${result.monthlyCharacters.toLocaleString()}/${result.monthlyLimit.toLocaleString()}文字${warning}`;
 }
 
 async function useLocalTranslation() {
@@ -594,11 +596,17 @@ async function useLocalTranslation() {
     return setPanelMessage("端末内翻訳を利用できませんでした。Chromeの更新またはクラウド翻訳をお試しください。", true);
   }
   root.querySelector("#pn-translation").value = result.translation;
+  recordLocalLookup();
   resizeLongTextarea(root.querySelector("#pn-translation"));
   root.querySelector("#pn-provider").textContent = "端末内翻訳 · ¥0";
   button.hidden = true;
   root.querySelector("#pn-cloud").hidden = true;
   await populateCandidateTerms(selectedPageText, false);
+}
+
+function recordLocalLookup() {
+  try { void Promise.resolve(chrome.runtime.sendMessage({ type:"RECORD_LOOKUP" })).catch(() => {}); }
+  catch { /* Keep the successfully translated text even without cloud activity logging. */ }
 }
 
 async function useCloudTranslation() {

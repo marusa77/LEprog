@@ -132,7 +132,7 @@ async function knowledgeUiHarness({ entry = false } = {}) {
   const ui = await loadTypeScriptModule(entry ? "../app/knowledge-note-entry.tsx" : "../app/knowledge-notes.tsx", {
     Error, Intl, crypto:{ randomUUID:() => `new-note-${++sequence}` },
     window:{ confirm:() => confirmResult, addEventListener:(name, callback) => events.set(name, callback), removeEventListener:name => events.delete(name) },
-    require:name => name === "react" ? react : name === "./knowledge-notes-data" ? data : name === "./knowledge-note-editor" ? editor : name === "./supabase-browser" ? {
+    require:name => name === "react" ? react : name === "./activity-review-button" ? { ActivityReviewButton:() => null } : name === "./knowledge-notes-data" ? data : name === "./knowledge-note-editor" ? editor : name === "./supabase-browser" ? {
       loadKnowledgeNotes:() => request("load", []), saveKnowledgeNote:(...args) => request("save", args), setKnowledgeNoteReviewFlag:(...args) => request("flag", args),
     } : nodeRequire(name),
   });
@@ -245,7 +245,7 @@ test("learning memo sections keep the knowledge editor mounted and retain existi
   const hooks = []; let cursor = 0; const edits = [];
   const react = { useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = initial; return [hooks[slot], value => { hooks[slot] = value; }]; }, useEffect() {} };
   const KnowledgeNotesView = () => createElement("div", { "data-knowledge-notes":true });
-  const app = await loadTypeScriptModule("../app/learning-app.tsx", { require:name => name === "react" ? react : name === "./knowledge-notes" ? { KnowledgeNotesView } : name.startsWith(".") ? {} : nodeRequire(name) });
+  const app = await loadTypeScriptModule("../app/learning-app.tsx", { require:name => name === "react" ? react : name === "./activity-review-button" ? { ActivityReviewButton:() => null } : name === "./knowledge-notes" ? { KnowledgeNotesView } : name.startsWith(".") ? {} : nodeRequire(name) });
   const word = { id:"word", term:"used to", meaning:"意味", coreImage:"元のコアイメージ", note:"元の語句メモ" };
   const sentence = { id:"sentence", source:"An example.", translation:"例文", note:"元の英文メモ" };
   const props = { words:[word], sentences:[sentence], onEditWord:value => edits.push(value.id), onEditSentence:value => edits.push(value.id) };
@@ -385,38 +385,140 @@ test("activity counts saves once and reviews once per word per Japan day includi
   assert.equal(days.find(day => day.date === "2026-10-09").reviews, 1);
   assert.equal(days.find(day => day.date === "2026-10-11").total, 0);
   assert.equal(days.find(day => day.date === "2026-10-11").future, true);
-  assert.match(activity.activityDayLabel(today), /英文の保存 2件・復習 2語/);
+  assert.match(activity.activityDayLabel(today), /保存・追記 2件・復習 2件/);
   for (const [count, level] of [[0,0],[1,1],[2,2],[4,2],[5,3],[9,3],[10,4],[1000,4]]) assert.equal(activity.activityLevel(count), level);
 });
 
-test("calendar reads only ranged IDs/timestamps, pages all reviews, uses authentication and never writes or translates", async () => {
-  const activity = await loadTypeScriptModule("../app/learning-activity.ts");
-  const helpers = await loadTypeScriptModule("../app/manual-entry-data.ts");
-  const values = new Map([
-    ["phrase-nest-web-config", JSON.stringify({ projectUrl:"https://example.supabase.co", publishableKey:"test-key" })],
-    ["phrase-nest-web-session", JSON.stringify({ access_token:"test-access", refresh_token:"test-refresh", expires_at:Math.floor(Date.now()/1000)+3600 })],
-  ]);
-  const calls = [];
+async function activityApiHarness(responder) {
+  const activity = await loadTypeScriptModule("../app/learning-activity.ts"); const calls = []; let signedIn = true;
   const browser = await loadTypeScriptModule("../app/supabase-browser.ts", {
-    require:name => name === "./learning-activity" ? activity : helpers, window:{}, localStorage:{ getItem:key => values.get(key) || null },
-    fetch:async (url, init) => {
-      const parsed = new URL(url); calls.push({ parsed, init });
-      if (parsed.pathname.endsWith("sentences")) return new Response(JSON.stringify([{ id:"saved", created_at:"2026-10-09T16:00:00Z" }]));
-      const offset = Number(parsed.searchParams.get("offset"));
-      return new Response(JSON.stringify(Array.from({ length:offset < 1000 ? 500 : 1 }, (_, index) => ({ vocabulary_id:`w${offset + index}`, reviewed_at:"2026-10-09T16:00:00Z" }))));
-    },
+    Error, window:{}, require:name => name === "./learning-activity" ? activity : {},
+    localStorage:{ getItem:key => key === "phrase-nest-web-config" ? JSON.stringify({ projectUrl:"https://example.supabase.co", publishableKey:"test-key" }) : signedIn ? JSON.stringify({ access_token:"test-access", refresh_token:"test-refresh", expires_at:Math.floor(Date.now()/1000)+3600 }) : null },
+    fetch:async (url, init) => { const call = { parsed:new URL(url), init }; calls.push(call); return responder(call); },
   });
-  const data = await browser.loadLearningActivity("2026-10-10");
-  assert.equal(data.sentences.length, 1); assert.equal(data.reviews.length, 1001); assert.equal(calls.length, 4);
-  assert.equal(activity.buildActivityDays("2026-10-10", data.sentences, data.reviews).find(day => day.date === "2026-10-10").reviews, 1001);
-  for (const { parsed, init } of calls) {
+  return { browser, activity, calls, signOut() { signedIn = false; } };
+}
+
+test("calendar reads only ranged event metadata, pages all history and never writes or translates", async () => {
+  const h = await activityApiHarness(({ parsed }) => {
+    const offset = Number(parsed.searchParams.get("offset"));
+    return new Response(JSON.stringify(Array.from({ length:offset < 1000 ? 500 : 1 }, (_, index) => ({ kind:"review", source:"sentence", subject_key:`s${offset + index}`, occurred_at:"2026-10-09T16:00:00Z" }))));
+  });
+  const data = await h.browser.loadLearningActivity("2026-10-10");
+  assert.equal(data.events.length, 1001); assert.equal(data.sentences.length, 0); assert.equal(data.reviews.length, 0); assert.equal(h.calls.length, 3);
+  assert.equal(h.activity.buildActivityDays("2026-10-10", data.sentences, data.reviews, data.events).find(day => day.date === "2026-10-10").sentenceReviews, 1001);
+  for (const { parsed, init } of h.calls) {
     assert.equal(init.method, undefined); assert.equal(init.headers.Authorization, "Bearer test-access");
-    assert.doesNotMatch(parsed.pathname, /functions|rpc/);
-    const timestamp = parsed.pathname.endsWith("sentences") ? "created_at" : "reviewed_at";
-    assert.equal(parsed.searchParams.getAll(timestamp)[0], "gte.2026-08-16T15:00:00.000Z");
-    assert.equal(parsed.searchParams.getAll(timestamp)[1], "lt.2026-10-10T15:00:00.000Z");
-    assert.equal(parsed.searchParams.get("select"), timestamp === "created_at" ? "id,created_at" : "vocabulary_id,reviewed_at");
+    assert.equal(parsed.pathname, "/rest/v1/learning_activity_events");
+    assert.equal(parsed.searchParams.getAll("occurred_at")[0], "gte.2026-08-16T15:00:00.000Z");
+    assert.equal(parsed.searchParams.getAll("occurred_at")[1], "lt.2026-10-10T15:00:00.000Z");
+    assert.equal(parsed.searchParams.get("select"), "kind,source,subject_key,occurred_at");
+    assert.doesNotMatch(parsed.searchParams.get("select"), /body|translation|original_text|note/);
   }
+});
+
+test("missing activity SQL keeps old data visible, includes historical sentence reviews and distinguishes connection failures", async () => {
+  const h = await activityApiHarness(({ parsed }) => {
+    const table = parsed.pathname.split("/").at(-1);
+    if (table === "learning_activity_events" || table === "knowledge_notes") return new Response(JSON.stringify({ message:`Could not find the table 'public.${table}' in the schema cache` }), { status:404 });
+    const rows = table === "sentences" ? [{ id:"s", created_at:"2026-10-09T16:00:00Z" }] : table === "review_logs" ? [{ vocabulary_id:"v", reviewed_at:"2026-10-09T16:00:00Z" }]
+      : table === "sentence_review_events" ? Array.from({ length:10 }, (_, i) => ({ sentence_id:`s${i}`, reviewed_at:"2026-10-09T16:00:00Z" }))
+      : table === "vocabulary_items" ? [{ id:"v", created_at:"2026-10-09T16:00:00Z" }] : [];
+    return new Response(JSON.stringify(rows));
+  });
+  const data = await h.browser.loadLearningActivity("2026-10-10");
+  assert.match(data.notice, /0007_learning_activity.sql/);
+  const today = h.activity.buildActivityDays("2026-10-10", data.sentences, data.reviews, data.events).find(day => day.date === "2026-10-10");
+  assert.equal(today.saves, 2); assert.equal(today.sentenceReviews, 10); assert.equal(today.wordReviews, 1); assert.equal(today.reviews, 11);
+  assert.ok(h.calls.every(call => !call.init.method && call.init.headers.Authorization === "Bearer test-access"));
+  const broken = await activityApiHarness(() => new Response(JSON.stringify({ message:"temporarily unavailable" }), { status:503 }));
+  await assert.rejects(broken.browser.loadLearningActivity("2026-10-10"), /temporarily unavailable/); assert.equal(broken.calls.length, 1);
+  h.signOut(); const before = h.calls.length; await assert.rejects(h.browser.loadLearningActivity("2026-10-10"), /ログイン/); assert.equal(h.calls.length, before);
+});
+
+test("all learning sources combine with legacy history without duplicates at Japan midnight", async () => {
+  const activity = await loadTypeScriptModule("../app/learning-activity.ts");
+  const time = "2026-10-23T15:00:00Z";
+  const event = (kind, source, subject_key, occurred_at = time) => ({ kind, source, subject_key, occurred_at });
+  const events = [
+    ...["sentence", "vocabulary", "knowledge", "phrase"].map(source => event("save", source, "same")),
+    ...Array.from({ length:10 }, (_, i) => event("review", "sentence", String(i))),
+    event("review", "vocabulary", "same"), event("review", "knowledge", "same"),
+    event("lookup", "translation", "daily"), event("lookup", "translation", "repeated"),
+    event("review", "sentence", "yesterday", "2026-10-23T14:59:59Z"),
+    event("review", "sentence", "tomorrow", "2026-10-24T15:00:00Z"),
+    event("save", "sentence", "", time), event("save", "sentence", "bad", "invalid"), event("review", "phrase", "invalid"),
+  ];
+  const rows = activity.buildActivityDays("2026-10-24", [{ id:"same", created_at:time }], [{ vocabulary_id:"same", reviewed_at:time }], [...events, ...events]);
+  const today = rows.find(day => day.date === "2026-10-24");
+  assert.equal(today.saves, 4); assert.equal(today.sentenceReviews, 10); assert.equal(today.wordReviews, 1); assert.equal(today.noteReviews, 1);
+  assert.equal(today.reviews, 12); assert.equal(today.lookups, 1); assert.equal(today.total, 17); assert.equal(today.level, 4);
+  assert.equal(rows.find(day => day.date === "2026-10-23").reviews, 1);
+  assert.equal(rows.find(day => day.date === "2026-10-25").total, 0);
+  assert.match(activity.activityDayLabel(today), /英文 10件・語句 1件・ノート 1件/);
+});
+
+test("activity SQL backfills real history, deduplicates daily and writes no learning content or scheduling fields", async () => {
+  const sql = await readFile(new URL("../supabase/migrations/0007_learning_activity.sql", import.meta.url), "utf8");
+  assert.match(sql, /unique \(user_id, study_date, kind, source, subject_key\)/);
+  assert.match(sql, /at time zone 'Asia\/Tokyo'/);
+  assert.match(sql, /enable row level security/);
+  assert.match(sql, /for select to authenticated using \(auth\.uid\(\) = user_id\)/);
+  assert.match(sql, /revoke all on public\.learning_activity_events from public, anon, authenticated/);
+  assert.doesNotMatch(sql, /grant (?:all|insert|update|delete) on public\.learning_activity_events/);
+  assert.match(sql, /revoke all on function public\.append_learning_activity\([^;]+from public, anon, authenticated/);
+  assert.match(sql, /if auth\.uid\(\) is null or auth\.uid\(\) <> new\.user_id then return new/);
+  for (const table of ["sentences", "vocabulary_items", "knowledge_notes", "custom_phrase_patterns", "review_logs", "sentence_review_events"]) assert.ok(sql.includes(table));
+  assert.match(sql, /source = 'translation' and subject_key = 'daily'/);
+  for (const source of ["knowledge", "vocabulary", "sentence"]) assert.match(sql, new RegExp(`p_source = '${source}'`));
+  assert.equal((sql.match(/where id=p_subject_id and user_id=v_user/g) || []).length, 3);
+  assert.match(sql, /if not v_owned then raise exception/);
+  assert.match(sql, /on conflict \(user_id,study_date,kind,source,subject_key\) do nothing/);
+  assert.doesNotMatch(sql, /\b(?:update|delete from|insert into) public\.(?:sentences|vocabulary_items|knowledge_notes|custom_phrase_patterns|review_logs|sentence_review_events)\b/i);
+  assert.doesNotMatch(sql, /\b(?:new\.(?:status|next_review_at|title|body|note)|updated_at|last_reviewed_at|sentence_review_count)\s*[:=]/i);
+  assert.doesNotMatch(sql, /\bdrop\b|\btruncate\b|for (?:insert|update|delete) to authenticated/i);
+});
+
+test("explicit rereading writes only owned item IDs and lookup failure never discards a successful translation", async () => {
+  const h = await activityApiHarness(({ parsed }) => new Response(JSON.stringify(parsed.pathname.includes("/functions/") ? { translation:"翻訳成功", monthlyCharacters:1, monthlyLimit:450000 } : {}), { status:200 }));
+  await h.browser.recordLearningReview("knowledge", "note-id");
+  assert.deepEqual(JSON.parse(h.calls[0].init.body), { p_source:"knowledge", p_subject_id:"note-id" });
+  assert.equal(h.calls[0].init.headers.Authorization, "Bearer test-access");
+  const before = h.calls.length; await assert.rejects(h.browser.recordLearningReview("arbitrary-table", "id"), /確認/); assert.equal(h.calls.length, before);
+  const broken = await activityApiHarness(({ parsed }) => new Response(JSON.stringify(parsed.pathname.includes("/functions/") ? { translation:"翻訳成功", monthlyCharacters:1, monthlyLimit:450000 } : { message:"temporarily unavailable" }), { status:parsed.pathname.includes("/functions/") ? 200 : 503 }));
+  const translated = await broken.browser.translateManualText("Hello.", "en", "ja");
+  assert.equal(translated.translation, "翻訳成功"); assert.equal(translated.activityRecorded, false);
+  assert.deepEqual(JSON.parse(broken.calls[1].init.body), {}); assert.match(broken.calls[1].parsed.pathname, /record_learning_lookup$/);
+});
+
+test("memo reread buttons block double clicks, preserve retry information and never update vocabulary status", async () => {
+  const hooks = []; let cursor = 0; let tree; const calls = [];
+  const react = { useState(initial) { const slot = cursor++; if (!(slot in hooks)) hooks[slot] = initial; return [hooks[slot], value => { hooks[slot] = value; }]; }, useRef(initial) { const slot = cursor++; return hooks[slot] ||= { current:initial }; } };
+  const ui = await loadTypeScriptModule("../app/activity-review-button.tsx", {
+    Error, require:name => name === "react" ? react : name === "./supabase-browser" ? { recordLearningReview(source, id) { return new Promise((resolve, reject) => calls.push({ source, id, resolve, reject })); } } : nodeRequire(name),
+  });
+  const render = () => { cursor = 0; tree = ui.ActivityReviewButton({ source:"knowledge", id:"my-note" }); };
+  render(); tree.props.children[0].props.onClick(); tree.props.children[0].props.onClick(); render();
+  assert.equal(calls.length, 1); assert.equal(tree.props.children[0].props.disabled, true);
+  calls[0].reject(new Error("記録に失敗")); await new Promise(resolve => setImmediate(resolve)); render(); assert.match(renderToStaticMarkup(tree), /記録に失敗/);
+  tree.props.children[0].props.onClick(); assert.equal(calls[1].id, calls[0].id); assert.equal(calls[1].source, "knowledge");
+  calls[1].resolve(); await new Promise(resolve => setImmediate(resolve)); render(); assert.match(renderToStaticMarkup(tree), /今日の復習に記録しました/);
+  assert.match(renderToStaticMarkup(tree), /学習状態や復習予定は変更しません/);
+});
+
+test("extension lookup metadata logging cannot turn translation success into failure and never sends the English text twice", async () => {
+  const source = await readFile(new URL("../extension/service-worker.js", import.meta.url), "utf8");
+  const calls = []; const context = { calls, failLog:true, failTranslation:false, chrome:{ commands:{ onCommand:{ addListener() {} } }, runtime:{ onInstalled:{ addListener() {} }, onMessage:{ addListener() {} } } } };
+  vm.createContext(context); vm.runInContext(source, context);
+  vm.runInContext(`authenticatedFetch = async (path, init) => { calls.push({ path, body:JSON.parse(init.body) }); if (path.startsWith('/functions/') && failTranslation) throw new Error('translation failed'); if (path.endsWith('record_learning_lookup') && failLog) throw new Error('log failed'); return { translations:['訳'] }; };`, context);
+  const translated = await vm.runInContext(`callFunction('translate', { texts:['Private learning text'], source:'en', target:'ja' })`, context);
+  assert.equal(translated.ok, true); assert.equal(translated.result.activityRecorded, false); assert.equal(translated.result.translations[0], "訳");
+  assert.match(calls[1].path, /record_learning_lookup$/); assert.deepEqual(JSON.parse(JSON.stringify(calls[1].body)), {});
+  context.failTranslation = true; const before = calls.length; const failed = await vm.runInContext(`callFunction('translate', { texts:['Failed text'] })`, context);
+  assert.equal(failed.ok, false); assert.equal(calls.length, before + 1, "failed translations must not create lookup activity");
+  context.failLog = false; assert.equal((await vm.runInContext("recordLookup()", context)).ok, true);
+  const panel = await readFile(new URL("../extension/content-script.js", import.meta.url), "utf8");
+  assert.match(panel, /if \(localResult\.translation\)\s*\{\s*recordLocalLookup\(\)/);
 });
 
 test("calendar renders selectable days, handles failure/retry and refreshes after saves/reviews and returning to the page", async () => {
@@ -438,12 +540,12 @@ test("calendar renders selectable days, handles failure/retry and refreshes afte
   let tree = render();
   assert.match(renderToStaticMarkup(tree), /学習記録を読み込んでいます/);
   const today = requests[0].today;
-  const data = { sentences:[{ id:"s", created_at:`${today}T10:00:00+09:00` }], reviews:[{ vocabulary_id:"w", reviewed_at:`${today}T11:00:00+09:00` }] };
+  const data = { sentences:[{ id:"s", created_at:`${today}T10:00:00+09:00` }], reviews:[{ vocabulary_id:"w", reviewed_at:`${today}T11:00:00+09:00` }], events:Array.from({ length:10 }, (_, i) => ({ kind:"review", source:"sentence", subject_key:`sentence-${i}`, occurred_at:`${today}T11:00:00+09:00` })) };
   requests[0].resolve(data); await Promise.resolve(); tree = render();
   let html = renderToStaticMarkup(tree);
   assert.equal((html.match(/<button /g) || []).length, 56);
-  assert.match(html, /aria-current="date"/); assert.match(html, /英文の保存 1件・復習 1語/); assert.match(html, /何が記録される/);
-  const past = nodes(tree).find(node => node.type === "button" && !node.props.disabled && node.props["aria-label"].includes("英文の保存 0件"));
+  assert.match(html, /aria-current="date"/); assert.match(html, /保存・追記 1件・復習 11件/); assert.match(html, /英文 10件・語句 1件・ノート 0件/); assert.match(html, /何が記録される/);
+  const past = nodes(tree).find(node => node.type === "button" && !node.props.disabled && node.props["aria-label"].includes("保存・追記 0件"));
   past.props.onClick(); tree = render();
   assert.match(renderToStaticMarkup(tree), /aria-pressed="true"/);
   render(1); assert.equal(requests.length, 2); tree = render(1);
@@ -667,6 +769,16 @@ test("sentence lists preview long notes but round review reveals full notes in o
   h.button("一覧に戻る").props.onClick(); h.render(); assert.match(h.html(), /sentence-note-text collapsed/);
   const empty = await sentenceStudyHarness([studySentence("empty", { note:"" })]); empty.render();
   assert.equal(empty.nodes().filter(node => node.type?.name === "SentenceNote").length, 0);
+});
+
+test("sentence rereading in the normal list records immediately without starting a ten-item round", async () => {
+  const h = await sentenceStudyHarness([studySentence("a")]); h.render();
+  h.button("読み直した").props.onClick(); h.button("読み直した").props.onClick(); assert.equal(h.requests.length, 1);
+  h.requests[0].reject(new Error("通信エラー")); await new Promise(resolve => setImmediate(resolve)); h.render();
+  h.button("読み直した").props.onClick(); assert.equal(h.requests[1].token, h.requests[0].token);
+  h.requests[1].resolve({ id:"a", review_preference:"normal", last_reviewed_at:"2026-10-24T00:00:00Z", sentence_review_count:1 });
+  await new Promise(resolve => setImmediate(resolve)); h.render();
+  assert.match(h.html(), /この英文の復習を記録しました/); assert.ok(h.button("英文を1件復習")); assert.equal(h.getSentences()[0].reviewCount, 1);
 });
 
 test("sentence UI keeps a failed review in place, blocks double clicks, and retries with the same ID", async () => {
@@ -1091,7 +1203,7 @@ test("copy buttons use the current sentence and do not replace drag or double-cl
 
 test("page capture uses temporary access without automatic scripts or all-site read permissions", async () => {
   const manifest = JSON.parse(await readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"));
-  assert.equal(manifest.version, "0.9.5");
+  assert.equal(manifest.version, "0.9.6");
   assert.ok(manifest.permissions.includes("activeTab")); assert.ok(manifest.permissions.includes("scripting"));
   assert.deepEqual(manifest.host_permissions, ["https://*.supabase.co/*"]);
   assert.equal(manifest.content_scripts, undefined);
@@ -1316,10 +1428,12 @@ test("manual saving never calls translation and explicit translation supports bo
   assert.match(calls[1].url, /\/functions\/v1\/translate$/);
   assert.equal(calls[1].body.source, "ja"); assert.equal(calls[1].body.target, "en");
   await browser.translateManualText("Please draw one slip.", "en", "ja");
-  assert.equal(calls[2].body.source, "en"); assert.equal(calls[2].body.target, "ja");
+  assert.match(calls[2].url, /record_learning_lookup$/); assert.deepEqual(calls[2].body, {});
+  assert.equal(calls[3].body.source, "en"); assert.equal(calls[3].body.target, "ja");
   await assert.rejects(browser.translateManualText(" ", "en", "ja"), /英文/);
   await assert.rejects(browser.translateManualText("a".repeat(5001), "en", "ja"), /5,000/);
-  assert.equal(calls.length, 3);
+  assert.equal(calls.length, 5);
+  assert.match(calls[4].url, /record_learning_lookup$/);
 });
 
 test("manual form renders editable inputs without invoking paid services", async () => {

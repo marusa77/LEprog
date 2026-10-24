@@ -14,6 +14,7 @@ PhraseNestは、PC版Chromeの拡張機能、復習用のWeb画面、Supabaseの
 | [0004](../supabase/migrations/0004_append_vocabulary_details.sql) | 語句の説明の追記 |
 | [0005](../supabase/migrations/0005_sentence_study.sql) | 英文の出やすさ・復習履歴 |
 | [0006](../supabase/migrations/0006_knowledge_notes.sql) | 英文とは独立した知識ノート・あとで確認する目印 |
+| [0007](../supabase/migrations/0007_learning_activity.sql) | 保存・追記・英文／語句／ノートの復習・翻訳の学習記録 |
 
 既存のプロジェクトでは、未実行の追加SQLだけを実行してください。0001は新規作成用なので、既存テーブルに実行し直さないでください。コードの更新だけではSupabaseのSQLは実行されません。
 

@@ -134,6 +134,9 @@ button:disabled { cursor:default; }
 .activity-footer { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px 12px; margin-top:12px; color:var(--muted); font-size:.75rem; }.activity-legend { display:flex; align-items:center; gap:4px; }.activity-legend i { width:12px; height:12px; border-radius:3px; }
 .activity-detail { display:flex; flex-wrap:wrap; align-items:center; gap:5px 16px; margin-top:14px; padding:10px 12px; background:var(--paper); border-radius:8px; font-size:.875rem; }.activity-detail time { font-weight:650; }.activity-detail strong { color:var(--green-dark); margin:0 4px; }.activity-detail small { width:100%; color:var(--muted); font-size:.75rem; }
 .activity-help { margin-top:10px; color:var(--muted); font-size:.75rem; }.activity-help summary { cursor:pointer; }.activity-help p { margin:8px 0 0; line-height:1.8; }.activity-message { color:var(--muted); font-size:.875rem; min-height:60px; }.activity-message button { margin:8px; }
+.activity-review-action { display:flex; align-items:center; flex-wrap:wrap; gap:8px; margin-top:14px; }
+.activity-review-action button { min-height:44px; }
+.activity-review-action small { color:var(--muted); font-size:.8rem; line-height:1.7; }
 @media(max-width:620px) { .activity-calendar { padding:16px 14px; margin-bottom:24px; }.activity-weeks { gap:4px; }.activity-chart { gap:6px; }.activity-week-label { font-size:9px; }.activity-days-count { font-size:.75rem; } }
 
 .writing-notice { margin:0 0 24px; padding:14px 18px; border-radius:10px; background:var(--mint); color:var(--green-dark); font-size:.875rem; line-height:1.8; }

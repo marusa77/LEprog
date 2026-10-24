@@ -9,6 +9,7 @@ import { WritingPracticeView } from "./writing-practice";
 import { SentenceLibraryView } from "./sentence-study";
 import { KnowledgeNotesView } from "./knowledge-notes";
 import { KnowledgeNoteEntryView } from "./knowledge-note-entry";
+import { ActivityReviewButton } from "./activity-review-button";
 import type { KnowledgeNote } from "./knowledge-notes-data";
 import { isReviewPreference, type SentenceStudyMetadata, type StudySentence } from "./sentence-study-data";
 import { sentenceSourceLabel } from "./manual-entry-data";
@@ -150,6 +151,7 @@ export function LearningApp() {
   }
 
   function saveSentenceStudyMetadata(metadata: SentenceStudyMetadata) {
+    setActivityVersion(version => version + 1);
     setSentenceItems(current => current.map(sentence => sentence.id === metadata.id ? {
       ...sentence, reviewPreference:metadata.review_preference, lastReviewedAt:metadata.last_reviewed_at, reviewCount:metadata.sentence_review_count,
     } : sentence));
@@ -298,9 +300,9 @@ export function NotesView({ words, sentences, onEditWord, onEditSentence, active
   const [filter, setFilter] = useState<NoteFilter>("all");
   const [query, setQuery] = useState("");
   const notes = [
-    ...words.filter((word) => word.coreImage).map((word) => ({ id: `core-${word.id}`, kind: "core" as const, label: "コアイメージ", title: word.term, body: word.coreImage, context: word.meaning, edit: () => onEditWord(word) })),
-    ...words.filter((word) => word.note).map((word) => ({ id: `word-${word.id}`, kind: "word" as const, label: "語句メモ", title: word.term, body: word.note, context: word.meaning, edit: () => onEditWord(word) })),
-    ...sentences.filter((sentence) => sentence.note).map((sentence) => ({ id: `sentence-${sentence.id}`, kind: "sentence" as const, label: "英文メモ", title: sentence.source, body: sentence.note, context: sentence.translation, edit: () => onEditSentence(sentence) })),
+    ...words.filter((word) => word.coreImage).map((word) => ({ id: `core-${word.id}`, sourceId:word.id, kind: "core" as const, label: "コアイメージ", title: word.term, body: word.coreImage, context: word.meaning, edit: () => onEditWord(word) })),
+    ...words.filter((word) => word.note).map((word) => ({ id: `word-${word.id}`, sourceId:word.id, kind: "word" as const, label: "語句メモ", title: word.term, body: word.note, context: word.meaning, edit: () => onEditWord(word) })),
+    ...sentences.filter((sentence) => sentence.note).map((sentence) => ({ id: `sentence-${sentence.id}`, sourceId:sentence.id, kind: "sentence" as const, label: "英文メモ", title: sentence.source, body: sentence.note, context: sentence.translation, edit: () => onEditSentence(sentence) })),
   ];
   const needle = query.trim().toLowerCase();
   const visibleNotes = notes.filter((note) => (filter === "all" || note.kind === filter) && (!needle || `${note.title} ${note.body} ${note.context}`.toLowerCase().includes(needle)));
@@ -311,7 +313,7 @@ export function NotesView({ words, sentences, onEditWord, onEditSentence, active
       <button type="button" className={section === "attached" ? "selected" : ""} aria-pressed={section === "attached"} onClick={() => setSection("attached")}>英文・語句のメモ</button>
     </div>
     <KnowledgeNotesView active={active && section === "knowledge"} onCountChange={onKnowledgeCountChange} onCreateNote={onCreateKnowledgeNote} savedNote={savedKnowledgeNote} openNoteRequest={openNoteRequest} />
-    {active && section === "attached" && <><div className="toolbar"><input aria-label="学習メモを検索" placeholder="語句・英文・メモ本文を検索" value={query} onChange={(event) => setQuery(event.target.value)} /><div className="filter-group">{(["all", "core", "word", "sentence"] as const).map((value) => <button type="button" key={value} className={filter === value ? "selected" : ""} onClick={() => setFilter(value)}>{labels[value]}</button>)}</div></div>{visibleNotes.length ? <div className="note-list">{visibleNotes.map((note) => <article className={`note-card ${note.kind}`} key={note.id}><div className="note-card-heading"><div><span>{note.label}</span><h2>{note.title}</h2></div><button className="edit-button" type="button" onClick={note.edit}>編集</button></div><p className="note-body">{note.body}</p>{note.context && <p className="note-context">{note.context}</p>}</article>)}</div> : <div className="list-empty"><h2>表示できるメモがありません</h2><p>絞り込みを変えるか、語句や英文にメモを追加してください。</p></div>}</>}
+    {active && section === "attached" && <><div className="toolbar"><input aria-label="学習メモを検索" placeholder="語句・英文・メモ本文を検索" value={query} onChange={(event) => setQuery(event.target.value)} /><div className="filter-group">{(["all", "core", "word", "sentence"] as const).map((value) => <button type="button" key={value} className={filter === value ? "selected" : ""} onClick={() => setFilter(value)}>{labels[value]}</button>)}</div></div>{visibleNotes.length ? <div className="note-list">{visibleNotes.map((note) => <article className={`note-card ${note.kind}`} key={note.id}><div className="note-card-heading"><div><span>{note.label}</span><h2>{note.title}</h2></div><button className="edit-button" type="button" onClick={note.edit}>編集</button></div><p className="note-body">{note.body}</p>{note.context && <p className="note-context">{note.context}</p>}<ActivityReviewButton source={note.kind === "sentence" ? "sentence" : "vocabulary"} id={note.sourceId} /></article>)}</div> : <div className="list-empty"><h2>表示できるメモがありません</h2><p>絞り込みを変えるか、語句や英文にメモを追加してください。</p></div>}</>}
   </>;
 }
 
