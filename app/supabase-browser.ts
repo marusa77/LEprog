@@ -1,5 +1,5 @@
 import { buildManualCapture, type CaptureResult, type ManualEntry } from "./manual-entry-data";
-import { activityRange, type ActivitySentence, type ActivityReview } from "./learning-activity";
+import { activityRange, type ActivitySentence, type ActivityReview, type ActivityEvent, type ActivityData } from "./learning-activity";
 import { buildWritingCapture, type WritingEntry } from "./writing-practice-data";
 import { isReviewPreference, type ReviewPreference, type SentenceStudyMetadata } from "./sentence-study-data";
 import { validateKnowledgeNote, type KnowledgeNote, type KnowledgeNoteInput } from "./knowledge-notes-data";
@@ -154,13 +154,46 @@ export async function submitSentenceReview(id: string, reviewId: string): Promis
   } catch (error) { return sentenceStudyError(error); }
 }
 
-export async function loadLearningActivity(today: string) {
+function missingActivitySchema(error: unknown) {
+  return error instanceof Error && /could not find|does not exist|PGRST205/i.test(error.message);
+}
+
+export async function loadLearningActivity(today: string): Promise<ActivityData> {
   const range = activityRange(today);
+  const ranged = (table: string, select: string, timestamp: string) => `/rest/v1/${table}?select=${select}&${timestamp}=gte.${encodeURIComponent(range.from)}&${timestamp}=lt.${encodeURIComponent(range.until)}&order=${timestamp}.asc,id.asc`;
+  try {
+    const events = await restPaged<ActivityEvent>(ranged("learning_activity_events", "kind,source,subject_key,occurred_at", "occurred_at"));
+    return { sentences:[], reviews:[], events };
+  } catch (error) { if (!missingActivitySchema(error)) throw error; }
+  // Before 0007 is applied, retain old counts and recover sentence reviews from
+  // 0005. Do not mistake a real network/authorization failure for a missing table.
   // Read only timestamps/IDs in the visible range, through the existing user-specific policies.
   // Sequential requests also avoid introducing parallel login refreshes here.
   const sentences = await restPaged<ActivitySentence>(`/rest/v1/sentences?select=id,created_at&created_at=gte.${encodeURIComponent(range.from)}&created_at=lt.${encodeURIComponent(range.until)}&order=created_at.asc,id.asc`);
   const reviews = await restPaged<ActivityReview>(`/rest/v1/review_logs?select=vocabulary_id,reviewed_at&reviewed_at=gte.${encodeURIComponent(range.from)}&reviewed_at=lt.${encodeURIComponent(range.until)}&order=reviewed_at.asc,id.asc`);
-  return { sentences, reviews };
+  const events: ActivityEvent[] = [];
+  for (const [table, source, id, time] of [["sentence_review_events", "sentence", "sentence_id", "reviewed_at"], ["vocabulary_items", "vocabulary", "id", "created_at"], ["knowledge_notes", "knowledge", "id", "created_at"], ["custom_phrase_patterns", "phrase", "id", "created_at"]] as const) {
+    try {
+      const rows = await restPaged<Record<string, string>>(ranged(table, `${id},${time}`, time));
+      events.push(...rows.map(row => ({ kind:table === "sentence_review_events" ? "review" as const : "save" as const, source, subject_key:row[id], occurred_at:row[time] })));
+    } catch (error) { if (!missingActivitySchema(error)) throw error; }
+  }
+  return { sentences, reviews, events, notice:"記録する行動を増やすには、Supabaseで0007_learning_activity.sqlを実行してください。今は既存の保存・復習履歴を表示しています。" };
+}
+
+export async function recordLearningReview(source: "sentence" | "vocabulary" | "knowledge", id: string) {
+  if (!["sentence", "vocabulary", "knowledge"].includes(source) || !id) throw new Error("復習する内容を確認してください。");
+  try { await rest("/rest/v1/rpc/record_learning_review", { method:"POST", body:JSON.stringify({ p_source:source, p_subject_id:id }) }); }
+  catch (error) {
+    if (missingActivitySchema(error)) throw new Error("復習の学習記録には、Supabaseで0007_learning_activity.sqlを実行してください。");
+    throw error;
+  }
+}
+
+export async function recordLearningLookup(): Promise<boolean> {
+  // Translation success must never be reported as failure if activity logging fails.
+  try { await rest("/rest/v1/rpc/record_learning_lookup", { method:"POST", body:"{}" }); return true; }
+  catch { return false; }
 }
 
 export async function saveManualEntry(entry: ManualEntry) {
@@ -187,7 +220,7 @@ export async function translateManualText(text: string, source: "en" | "ja", tar
   if (trimmed.length > 5000) throw new Error("翻訳は一度に5,000文字までです。短く分けてください。");
   const result = await rest<{ translation: string; translations?: string[]; monthlyCharacters: number; monthlyLimit: number }>("/functions/v1/translate", { method: "POST", body: JSON.stringify({ texts: [trimmed], source, target }) });
   if (typeof result.translation !== "string" || !result.translation.trim()) throw new Error("翻訳結果を取得できませんでした。入力内容は残しています。");
-  return result;
+  return { ...result, activityRecorded: await recordLearningLookup() };
 }
 
 export async function updateVocabularyItem(id: string, changes: { meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered" }) {

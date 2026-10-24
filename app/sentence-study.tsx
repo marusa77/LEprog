@@ -49,16 +49,18 @@ export function SentenceLibraryView({ sentences, onEdit, onStudyUpdated, active 
     finally { busy.current = false; setBusyId(null); }
   }
 
-  async function markRead() {
-    if (!current || !round || busy.current || !current.reviewReady) return;
-    busy.current = true; setBusyId(current.id); setError(""); setMessage("");
+  async function markRead(sentence = current, advanceRound = true) {
+    if (!sentence || (advanceRound && !round) || busy.current || !sentence.reviewReady) return;
+    busy.current = true; setBusyId(sentence.id); setError(""); setMessage("");
     try {
-      let token = reviewTokens.current.get(current.id);
-      if (!token) { token = crypto.randomUUID(); reviewTokens.current.set(current.id, token); }
-      onStudyUpdated(await submitSentenceReview(current.id, token));
-      reviewTokens.current.delete(current.id);
-      setRound(previous => previous ? { ...previous, index:previous.index + 1, completed:previous.completed + 1 } : previous);
-      setRevealed(false);
+      let token = reviewTokens.current.get(sentence.id);
+      if (!token) { token = crypto.randomUUID(); reviewTokens.current.set(sentence.id, token); }
+      onStudyUpdated(await submitSentenceReview(sentence.id, token));
+      reviewTokens.current.delete(sentence.id);
+      if (advanceRound) {
+        setRound(previous => previous ? { ...previous, index:previous.index + 1, completed:previous.completed + 1 } : previous);
+        setRevealed(false);
+      } else setMessage("この英文の復習を記録しました。学習カレンダーでは同じ英文は1日1件です。");
     } catch (failure) { setError(failure instanceof Error ? failure.message : "復習を記録できませんでした。英文を残しています。もう一度お試しください。"); }
     finally { busy.current = false; setBusyId(null); }
   }
@@ -120,7 +122,7 @@ export function SentenceLibraryView({ sentences, onEdit, onStudyUpdated, active 
       </section> : <div className="sentence-list">{ordered.map(sentence => <article className="sentence-card" key={sentence.id}>
         <div className="sentence-meta"><span>{sentence.community}</span><div><time>{sentence.savedAt}</time><button className="edit-button" type="button" disabled={busyId !== null} onClick={() => onEdit(sentence)}>編集</button></div></div>
         <h2>{sentence.source}</h2>{details(sentence, true)}
-        <div className="sentence-study-footer">{preferenceControl(sentence)}{sentence.reviewReady && <small>{sentenceStudySummary(sentence)}</small>}</div>
+        <div className="sentence-study-footer">{preferenceControl(sentence)}{sentence.reviewReady && <><small>{sentenceStudySummary(sentence)}</small><button type="button" className="edit-button" disabled={busyId !== null} onClick={() => void markRead(sentence, false)}>{busyId === sentence.id ? "記録中…" : "読み直した"}</button></>}</div>
       </article>)}</div>}
     </>}
   </>;

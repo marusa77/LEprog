@@ -72,6 +72,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   else if (message.type === "TRANSLATE") callFunction("translate", message.payload).then(sendResponse);
   else if (message.type === "EXPLAIN") callFunction("explain", message.payload).then(sendResponse);
   else if (message.type === "GET_CUSTOM_PATTERNS") getCustomPatterns().then(sendResponse);
+  else if (message.type === "RECORD_LOOKUP") recordLookup().then(sendResponse);
   else return false;
   return true;
 });
@@ -129,6 +130,14 @@ async function getCustomPatterns() {
 async function callFunction(name, payload) {
   try {
     const result = await authenticatedFetch(`/functions/v1/${name}`, { method: "POST", body: JSON.stringify(payload) });
-    return { ok: true, result };
+    const activity = name === "translate" || name === "explain" ? await recordLookup() : null;
+    return { ok: true, result: activity ? { ...result, activityRecorded:activity.ok } : result };
   } catch (error) { return { ok: false, error: error.message }; }
+}
+
+async function recordLookup() {
+  try {
+    await authenticatedFetch("/rest/v1/rpc/record_learning_lookup", { method:"POST", body:"{}" });
+    return { ok:true };
+  } catch { return { ok:false }; } // A logging failure must not discard a translation.
 }

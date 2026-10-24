@@ -55,7 +55,7 @@ export function ManualEntryView({ onSaved, onOpenLibrary, onTranslation, showHea
       if (source === "en") { setJapanese(result.translation); setMachineTranslation(result.translation); }
       else { setEnglish(result.translation); setMachineTranslation(null); }
       onTranslation(result.monthlyCharacters);
-      setMessage(`翻訳しました。自由に編集してから保存できます。今月 ${result.monthlyCharacters.toLocaleString()}/${result.monthlyLimit.toLocaleString()}文字`);
+      setMessage(`翻訳しました。自由に編集してから保存できます。今月 ${result.monthlyCharacters.toLocaleString()}/${result.monthlyLimit.toLocaleString()}文字${result.activityRecorded === false ? "。学習記録には反映できませんでした。接続と0007のSQLを確認してください。" : ""}`);
     } catch (translationError) { setError(translationError instanceof Error ? translationError.message : "翻訳できませんでした。訳を自分で入力して保存することもできます。"); }
     finally { operation.current = false; setBusy(null); }
   }
