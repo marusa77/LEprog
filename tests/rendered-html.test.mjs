@@ -166,7 +166,7 @@ test("knowledge creation preserves a separate draft, clears only on success and 
   assert.equal(h.requests.length, 0, "the input screen does not fetch the library or use translation");
   h.field("タイトル").props.onChange({ target:{ value:"used to の違い" } }); h.render();
   h.field("本文").props.onChange({ target:{ value:"元の自分用メモ\n" } }); h.render();
-  h.button("ひな形を本文に追加").props.onClick(); h.render();
+  h.button("ひな形を末尾に追加").props.onClick(); h.render();
   const body = h.field("本文").props.value;
   assert.ok(body.startsWith("元の自分用メモ\n")); assert.match(body, /パターンと使い分け/);
   let warned = false; h.events.get("beforeunload")({ preventDefault() { warned = true; } }); assert.equal(warned, true);
@@ -544,7 +544,7 @@ test("calendar renders selectable days, handles failure/retry and refreshes afte
   requests[0].resolve(data); await Promise.resolve(); tree = render();
   let html = renderToStaticMarkup(tree);
   assert.equal((html.match(/<button /g) || []).length, 56);
-  assert.match(html, /aria-current="date"/); assert.match(html, /保存・追記 1件・復習 11件/); assert.match(html, /英文 10件・語句 1件・ノート 0件/); assert.match(html, /何が記録される/);
+  assert.match(html, /aria-current="date"/); assert.match(html, /保存・追記 1件・復習 11件/); assert.match(html, /英文 10件・語句 1件・ノート 0件/); assert.match(html, /記録の数え方/);
   const past = nodes(tree).find(node => node.type === "button" && !node.props.disabled && node.props["aria-label"].includes("保存・追記 0件"));
   past.props.onClick(); tree = render();
   assert.match(renderToStaticMarkup(tree), /aria-pressed="true"/);
@@ -778,7 +778,7 @@ test("sentence rereading in the normal list records immediately without starting
   h.button("読み直した").props.onClick(); assert.equal(h.requests[1].token, h.requests[0].token);
   h.requests[1].resolve({ id:"a", review_preference:"normal", last_reviewed_at:"2026-10-24T00:00:00Z", sentence_review_count:1 });
   await new Promise(resolve => setImmediate(resolve)); h.render();
-  assert.match(h.html(), /この英文の復習を記録しました/); assert.ok(h.button("英文を1件復習")); assert.equal(h.getSentences()[0].reviewCount, 1);
+  assert.match(h.html(), /復習を記録しました/); assert.ok(h.button("英文を1件復習")); assert.equal(h.getSentences()[0].reviewCount, 1);
 });
 
 test("sentence UI keeps a failed review in place, blocks double clicks, and retries with the same ID", async () => {
@@ -902,7 +902,7 @@ test("writing screen offers topic choices, editable feedback and copy instructio
   assert.match(html, /英作文の練習/); assert.match(html, /作文と指示文をコピー/);
   assert.match(html, /お題作成用の指示文をコピー/);
   assert.match(html, /id="writing-feedback"/); assert.match(html, /日本語訳・伝えたかったこと（任意）/);
-  assert.match(html, /AI・翻訳APIは呼びません/); assert.match(html, /まず「入力して保存」/);
+  assert.match(html, /貼り付け先のサービス/); assert.match(html, /まず「入力して保存」/);
   assert.equal(calls, 0);
 });
 
@@ -978,7 +978,7 @@ test("server-renders the PhraseNest learning app", async () => {
   const html = await response.text();
   assert.match(html, /<title>PhraseNest/);
   assert.match(html, /PhraseNest/);
-  assert.match(html, /保存内容を読み込んでいます/);
+  assert.match(html, /読み込み中…/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
 });
 
@@ -1007,7 +1007,7 @@ test("ships the extension and cloud schema", async () => {
   assert.match(contentScript, /function openLauncher/);
   assert.match(contentScript, /保存後の変更あり/);
   assert.match(contentScript, /phraseNestPanelPreferences/);
-  assert.match(learningApp, /英文・語句・関連メモをまとめて検索/);
+  assert.match(learningApp, /保存内容を検索/);
   assert.match(learningApp, /function SearchView/);
   assert.match(learningApp, /よく出会う（3回以上）/);
   assert.match(contentScript, /保存内容/);
@@ -1070,12 +1070,15 @@ test("extension opens without a selection and reports the saved draft correctly"
   assert.equal(elements.get("#pn-resume").hidden, true);
   vm.runInContext('selectedPageText = "Keep going."; updateSaveState()', context);
   assert.equal(elements.get("#pn-save-state").textContent, "未保存");
+  assert.equal(elements.get("#pn-save-hint").hidden, true);
   vm.runInContext("savedCaptureSnapshot = captureSnapshot(); updateSaveState()", context);
   assert.equal(elements.get("#pn-save-state").textContent, "保存済み");
   assert.equal(elements.get("#pn-save").disabled, true);
   elements.get("#pn-note").value = "コアイメージのメモ";
   vm.runInContext("updateSaveState()", context);
   assert.equal(elements.get("#pn-save-state").textContent, "保存後の変更あり");
+  assert.equal(elements.get("#pn-save-hint").hidden, false);
+  assert.match(elements.get("#pn-save-hint").textContent, /別の英文記録/);
   assert.equal(elements.get("#pn-save").disabled, false);
   vm.runInContext("openLauncher()", context);
   assert.equal(elements.get("#pn-resume").hidden, false);
@@ -1203,7 +1206,7 @@ test("copy buttons use the current sentence and do not replace drag or double-cl
 
 test("page capture uses temporary access without automatic scripts or all-site read permissions", async () => {
   const manifest = JSON.parse(await readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"));
-  assert.equal(manifest.version, "0.9.6");
+  assert.equal(manifest.version, "0.9.7");
   assert.ok(manifest.permissions.includes("activeTab")); assert.ok(manifest.permissions.includes("scripting"));
   assert.deepEqual(manifest.host_permissions, ["https://*.supabase.co/*"]);
   assert.equal(manifest.content_scripts, undefined);
@@ -1484,7 +1487,7 @@ test("append dialog starts empty and migration preserves old explanations with d
   const app = await loadTypeScriptModule("../app/learning-app.tsx", { require:name => name.startsWith(".") ? {} : nodeRequire(name) });
   const html = renderToStaticMarkup(createElement(app.WordAppendDialog, { word:{ term:"draw" }, onClose() {}, onSave() { services++; } }));
   assert.match(html, /draw に説明を追記/); assert.match(html, /追加のコアイメージ/);
-  assert.match(html, /追記を保存/); assert.match(html, /区切り線と【追記】/);
+  assert.match(html, /追記を保存/); assert.match(html, /元の説明を残し、区切り線/);
   assert.match(html, /<textarea[^>]*><\/textarea>/); assert.equal(services, 0);
   const migration = await readFile(new URL("../supabase/migrations/0004_append_vocabulary_details.sql", import.meta.url), "utf8");
   assert.doesNotMatch(migration, /\b(drop|delete|truncate)\b/i);
@@ -1567,7 +1570,7 @@ test("manual form clears only successful saves, supports consecutive entries and
   assert.equal(find(node => node.type === "select").props.value, "daily");
   assert.equal(find(node => node.props?.placeholder === "例：draw lots"), undefined);
   assert.equal(find(node => node.type === "fieldset").props.disabled, false);
-  assert.match(renderToStaticMarkup(tree), /直前の英文を保存しました/);
+  assert.match(renderToStaticMarkup(tree), /保存しました/);
   assert.match(renderToStaticMarkup(tree), /登録済みの語句 1件/);
   assert.match(renderToStaticMarkup(tree), /保存した英文を見る/);
   assert.equal(focusCount, 1); assert.equal(scrollCount, 1); assert.equal(refreshCount, 1);
@@ -1598,7 +1601,8 @@ test("four primary destinations group saved content and retain direct links", as
     assert.equal(navigation.resolveTab(tab, "sentences"), tab);
     assert.equal(navigation.primaryTab(tab), "library");
   }
-  for (const tab of ["menu", "organize", "settings", "writing"]) assert.equal(navigation.primaryTab(tab), "menu");
+  for (const tab of ["menu", "organize", "settings", "writing", "help"]) assert.equal(navigation.primaryTab(tab), "menu");
+  assert.equal(navigation.resolveTab("help", "notes"), "help");
   assert.equal(navigation.resolveTab("writing", "notes"), "writing");
   assert.equal(navigation.resolveTab("unknown", "notes"), "today");
   const app = await loadTypeScriptModule("../app/learning-app.tsx", { require: name => name === "./navigation" ? navigation : name.startsWith(".") ? {} : nodeRequire(name) });
@@ -1618,11 +1622,18 @@ test("four primary destinations group saved content and retain direct links", as
   assert.match(savedHtml, /英文/); assert.match(savedHtml, /単語・熟語/); assert.match(savedHtml, /学習メモ/);
   const menu = app.MenuView({ pendingCount:5, onSelect:props.onSelect });
   const options = menu.props.children[1].props.children;
-  options[0].props.onClick(); options[1].props.onClick(); options[2].props.onClick();
-  assert.deepEqual(selections, ["notes", "writing", "organize", "settings"]);
+  options[0].props.onClick(); options[1].props.onClick(); options[2].props.onClick(); options[3].props.onClick();
+  assert.deepEqual(selections, ["notes", "writing", "organize", "settings", "help"]);
   const menuHtml = renderToStaticMarkup(menu);
   assert.match(menuHtml, /未整理 5件/);
   assert.match(menuHtml, /設定/);
+  const guide = await loadTypeScriptModule("../app/user-guide.tsx", { require:nodeRequire });
+  const tree = guide.UserGuideView({ onSelect:props.onSelect });
+  const walk = node => Array.isArray(node) ? node.flatMap(walk) : !node || typeof node !== "object" ? [] : [node, ...walk(node.props?.children)];
+  const guideNodes = walk(tree);
+  for (const node of guideNodes.filter(node => node.type === "button")) node.props.onClick();
+  assert.deepEqual(selections.slice(-5), ["capture", "today", "sentences", "writing", "organize"]);
+  assert.ok(guideNodes.filter(node => node.type === "details").every(node => !node.props.open));
 });
 
 test("Reddit panel folds secondary actions and closes its menu without losing the draft", async () => {
@@ -1640,7 +1651,7 @@ test("Reddit panel folds secondary actions and closes its menu without losing th
   const opened = [];
   let optionsCount = 0;
   let focusCount = 0;
-  for (const name of ["capture", "review", "library", "words", "notes", "organize"]) elements.set(`#pn-open-${name}`, { events:new Map(), addEventListener(event, callback) { this.events.set(event, callback); } });
+  for (const name of ["capture", "review", "library", "words", "notes", "organize", "help"]) elements.set(`#pn-open-${name}`, { events:new Map(), addEventListener(event, callback) { this.events.set(event, callback); } });
   const settings = { events:new Map(), addEventListener(event, callback) { this.events.set(event, callback); } };
   const menu = { ...settings, events:new Map(), open:true, querySelector:() => ({ focus() { focusCount++; } }) };
   elements.set("#pn-settings", settings); elements.set("#pn-menu", menu);
@@ -1658,7 +1669,7 @@ test("Reddit panel folds secondary actions and closes its menu without losing th
   elements.get("#pn-open-library").events.get("click")();
   assert.equal(new URL(opened[0]).searchParams.get("tab"), "library");
   assert.equal(menu.open, false);
-  for (const tab of ["words", "notes", "organize"]) {
+  for (const tab of ["words", "notes", "organize", "help"]) {
     menu.open = true; elements.get(`#pn-open-${tab}`).events.get("click")();
     assert.equal(new URL(opened.at(-1)).searchParams.get("tab"), tab);
     assert.equal(menu.open, false);

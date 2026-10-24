@@ -3,7 +3,7 @@
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PhraseNest 設定</title><link rel="stylesheet" href="options.css"></head>
 <body>
   <main>
-    <header><span class="mark">P</span><div><h1>PhraseNestの設定</h1><p>初回だけ設定します。ログイン状態はChromeに保存されます。</p></div></header>
+    <header><span class="mark">P</span><div><h1>PhraseNestの設定</h1></div></header>
     <section>
       <h2>1. Supabaseを接続</h2>
       <label>Project URL<input id="url" type="url" placeholder="https://xxxxx.supabase.co"></label>
@@ -14,7 +14,7 @@
     </section>
     <section>
       <h2>2. ログイン</h2>
-      <div id="signed-out"><button id="google-login" class="primary" type="button">Googleでログイン</button><p class="hint">初回ログイン後は、通常は入力不要です。</p><p class="hint">SupabaseのRedirect URLに次を追加してください：<code id="redirect-url"></code></p></div>
+      <div id="signed-out"><button id="google-login" class="primary" type="button">Googleでログイン</button><details><summary>初回のログイン設定</summary><p class="hint">SupabaseのRedirect URLに次を追加してください：<code id="redirect-url"></code></p></details></div>
       <div id="signed-in" hidden><p class="success">ログイン済みです</p><button id="logout" type="button">ログアウト</button></div>
       <p id="message" role="status"></p>
     </section>

@@ -17,11 +17,11 @@ export function renderKnowledgeNoteEditor({ draft, dirty, busy, templateId, clea
       <fieldset disabled={busy}>
         <label>タイトル<input autoFocus={Boolean(draft.original)} value={draft.title} onChange={event => onDraftChange({ ...draft, title:event.target.value })} placeholder="例：used to の使い分け" maxLength={knowledgeNoteLimits.title} required /></label>
         <div className="knowledge-template"><label>ひな形（任意）<select value={templateId} onChange={event => onTemplateChange(event.target.value)}>{knowledgeNoteTemplates.map(template => <option key={template.id} value={template.id}>{template.label}</option>)}</select></label>
-          <button type="button" className="edit-button" onClick={() => onDraftChange({ ...draft, body:appendKnowledgeTemplate(draft.body, templateId) })}>ひな形を本文に追加</button><small>入力済みの内容は消さず、末尾に追加します。見出しは自由に変更・削除できます。</small></div>
-        <label>本文<textarea value={draft.body} onChange={event => onDraftChange({ ...draft, body:event.target.value })} rows={16} placeholder="日本語だけでもOK。文法の整理、表現の比較、調べたことなどを自由に記録できます。例文は必須ではありません。" maxLength={knowledgeNoteLimits.body} required /></label>
+          <button type="button" className="edit-button" onClick={() => onDraftChange({ ...draft, body:appendKnowledgeTemplate(draft.body, templateId) })}>ひな形を末尾に追加</button></div>
+        <label>本文<textarea value={draft.body} onChange={event => onDraftChange({ ...draft, body:event.target.value })} rows={16} placeholder="文法や表現の使い分け、調べたことなど" maxLength={knowledgeNoteLimits.body} required /></label>
         <label className="knowledge-flag"><input type="checkbox" checked={draft.needs_review} onChange={event => onDraftChange({ ...draft, needs_review:event.target.checked })} />あとで確認する</label>
       </fieldset>
-      <p className="knowledge-help">保存ボタンで保存します。画面を切り替えても入力は残りますが、ページの再読み込みで未保存の入力は失われます。AI・翻訳APIは使いません。</p>
+      <p className="knowledge-help">未保存の内容は、ページを再読み込みすると失われます。</p>
       <div className="knowledge-actions"><button type="button" className="plain-action" disabled={busy} onClick={onCancel}>{clearLabel}</button><button type="submit" className="primary-button" disabled={busy || !draft.title.trim() || !draft.body.trim() || !dirty}>{busy ? "保存中…" : "ノートを保存"}</button></div>
     </form>;
 }

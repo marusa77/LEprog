@@ -175,19 +175,19 @@ function createPanel() {
         <button id="pn-open-library" class="pn-secondary" type="button">保存内容</button>
         <details id="pn-menu" class="pn-menu"><summary>メニュー</summary><div class="pn-menu-content">
           <div class="pn-menu-group"><span class="pn-menu-heading">保存内容の種類</span><button id="pn-open-words" class="pn-secondary" type="button">単語・熟語</button><button id="pn-open-notes" class="pn-secondary" type="button">学習メモ</button></div>
-          <div class="pn-menu-group"><span class="pn-menu-heading">管理</span><button id="pn-open-organize" class="pn-secondary" type="button">整理</button><button id="pn-settings" class="pn-secondary" type="button">拡張機能の設定</button></div>
+          <div class="pn-menu-group"><span class="pn-menu-heading">管理</span><button id="pn-open-organize" class="pn-secondary" type="button">整理</button><button id="pn-settings" class="pn-secondary" type="button">拡張機能の設定</button><button id="pn-open-help" class="pn-secondary" type="button">使い方</button></div>
           <div class="pn-menu-group"><span class="pn-menu-heading">小窓の表示</span><button id="pn-reset-size" class="pn-secondary" type="button" title="標準の幅・自動の高さ・右上の位置に戻す">サイズをリセット</button><label class="pn-font-preference">文字サイズ <select id="pn-font-size"><option value="14">標準</option><option value="16" selected>大きめ</option><option value="18">さらに大きめ</option></select></label></div>
         </div></details>
       </nav>
     </div>
-    <div id="pn-launcher" class="pn-body pn-launcher" hidden><h2>今日は何を確認しますか？</h2><p>上のメニューから、保存内容や復習をすぐに開けます。</p><p>翻訳するときはRedditの英文を選択して、Ctrl + Shift + Y を押してください。</p><button id="pn-resume" class="pn-secondary pn-full" type="button" hidden>入力中の英文に戻る</button></div>
+    <div id="pn-launcher" class="pn-body pn-launcher" hidden><h2>英文を選択して翻訳</h2><p>ページの英文を選び、Ctrl + Shift + Y</p><button id="pn-resume" class="pn-secondary pn-full" type="button" hidden>入力中の英文に戻る</button></div>
     <div class="pn-body" id="pn-editor">
       <div class="pn-text-grid"><div>
       <div class="pn-source-heading"><span class="pn-label">選択した英文</span><div class="pn-copy-actions"><button id="pn-copy-source" class="pn-copy" type="button">英文をコピー</button><button id="pn-copy-study" class="pn-copy" type="button" title="英文と、意味・コアイメージの説明を頼む指示文をコピー">質問文をコピー</button></div></div>
       <div id="pn-source" class="pn-source" tabindex="0"></div>
       <p id="pn-copy-status" class="pn-copy-status" role="status" hidden></p>
       <div id="pn-copy-fallback" class="pn-copy-fallback" hidden><label for="pn-copy-text">コピーできなかった場合：下の選択済みの文章をCtrl+Cでコピーしてください。</label><textarea id="pn-copy-text" readonly rows="5"></textarea><button id="pn-close-copy" class="pn-copy" type="button">閉じる</button></div>
-      <p class="pn-help">単語はダブルクリック、熟語はドラッグして選択できます。</p>
+      <details class="pn-inline-help"><summary>語句の選び方</summary><p>単語はダブルクリック、熟語はドラッグして選び、下のボタンで追加します。</p></details>
       <button id="pn-use-selection" class="pn-link" type="button">選択した語句を追加</button>
       </div><div>
       <label class="pn-label" for="pn-translation">日本語訳</label>
@@ -202,7 +202,7 @@ function createPanel() {
       <div id="pn-terms" class="pn-terms"></div>
       <p id="pn-message" class="pn-message" role="status"></p>
     </div>
-    <footer id="pn-save-footer"><div><span id="pn-save-state" role="status">未保存</span><small id="pn-save-hint">訳・メモは保存ボタンで保存されます。</small></div><button id="pn-save" class="pn-primary" type="button">英文と語句を保存</button></footer>
+    <footer id="pn-save-footer"><div><span id="pn-save-state" role="status">未保存</span><small id="pn-save-hint" hidden></small></div><button id="pn-save" class="pn-primary" type="button">英文と語句を保存</button></footer>
     ${["nw", "ne", "sw", "se"].map((corner) => `<button type="button" class="pn-resize pn-resize-${corner}" data-corner="${corner}" aria-label="${{ nw: "左上", ne: "右上", sw: "左下", se: "右下" }[corner]}の角からサイズを変更" title="ドラッグでサイズ変更（矢印キーでも調整できます）"></button>`).join("")}`;
   shadow.append(panel);
   document.documentElement.append(phraseNestHost);
@@ -259,7 +259,7 @@ function bindPanelEvents(root) {
 function bindNavigationEvents(root) {
   const menu = root.querySelector("#pn-menu");
   menu.addEventListener("toggle", () => { if (menu.open) updateMenuMaxHeight(root); });
-  for (const [id, tab] of [["capture", "capture"], ["review", "today"], ["library", "library"], ["words", "words"], ["notes", "notes"], ["organize", "organize"]]) {
+  for (const [id, tab] of [["capture", "capture"], ["review", "today"], ["library", "library"], ["words", "words"], ["notes", "notes"], ["organize", "organize"], ["help", "help"]]) {
     root.querySelector(`#pn-open-${id}`).addEventListener("click", () => {
       menu.open = false;
       openLearningPage(tab);
@@ -472,7 +472,9 @@ function updateSaveState() {
   const dirty = isCaptureDirty();
   root.querySelector("#pn-save-state").textContent = captureBusy ? "処理中…" : savedCaptureSnapshot === null ? "未保存" : dirty ? "保存後の変更あり" : "保存済み";
   root.querySelector("#pn-save-state").classList.toggle("pn-unsaved", dirty);
-  root.querySelector("#pn-save-hint").textContent = savedCaptureSnapshot !== null && dirty ? "自動保存ではありません。再保存すると別の英文記録になります。" : "訳・メモは保存ボタンで保存されます。";
+  const saveHint = root.querySelector("#pn-save-hint");
+  saveHint.hidden = !(savedCaptureSnapshot !== null && dirty);
+  saveHint.textContent = saveHint.hidden ? "" : "再保存すると別の英文記録になります。";
   root.querySelector("#pn-save").disabled = captureBusy || (savedCaptureSnapshot !== null && !dirty);
 }
 

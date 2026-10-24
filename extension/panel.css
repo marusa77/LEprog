@@ -54,6 +54,9 @@ textarea, input, select { border-color: var(--line-strong); }
 .pn-copy-status { margin:8px 0; color:var(--green-dark); font-size:12px; line-height:1.7; }.pn-copy-status.pn-copy-error { color:var(--rose); }
 .pn-copy-fallback { margin:10px 0; padding:12px; border:1px solid var(--line); border-radius:8px; background:var(--paper); }.pn-copy-fallback label { display:block; margin-bottom:8px; font-size:12px; line-height:1.7; }.pn-copy-fallback textarea { max-height:240px; overflow-y:auto; }.pn-copy-fallback .pn-copy { margin-top:8px; }
 .pn-help { margin: 8px 0; color: var(--muted); font-size: 12px; }
+.pn-inline-help { margin:8px 0; font-size:14px; line-height:1.75; color:var(--muted); }
+.pn-inline-help summary { min-height:36px; padding:6px 0; cursor:pointer; color:var(--green-dark); }
+.pn-inline-help p { margin:6px 0 10px; }
 .pn-link { display: block; margin: 0 0 8px auto; border: 0; background: transparent; color: var(--green); font: 700 14px/1.5 var(--font-sans); cursor: pointer; }
 textarea, input { width: 100%; border: 1px solid var(--line-strong); border-radius: 8px; background: white; color: var(--ink); padding: 11px 12px; font: var(--reading-size)/1.75 var(--font-sans); outline: none; }
 textarea:focus, input:focus { border-color: var(--green); box-shadow: 0 0 0 3px var(--mint); }
@@ -71,7 +74,7 @@ textarea { resize: vertical; max-height: 420px; overflow-y: hidden; scrollbar-gu
 .pn-plain { border: 0; background: transparent; color: var(--muted); }
 .pn-full { width: 100%; margin-top: 7px; }
 .pn-terms { display: grid; gap: 7px; margin-top: 9px; }
-.pn-term { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: start; padding: 10px; background: var(--paper); border-radius: 8px; }
+.pn-term { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: start; padding: 14px 0; background: transparent; border-top:1px solid var(--line); }
 .pn-term-check { width: 17px; height: 17px; margin: 4px 0 0; accent-color: var(--green); box-shadow: none; }
 .pn-term-title { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 5px; overflow-wrap: anywhere; }
 .pn-term-title strong { font-size: 15px; font-weight: 650; letter-spacing: -.015em; }

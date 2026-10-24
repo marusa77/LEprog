@@ -110,7 +110,7 @@ export function KnowledgeNotesView({ active = true, onCountChange, onCreateNote,
       <p className="knowledge-body">{opened.body}</p>
       <ActivityReviewButton key={opened.id} source="knowledge" id={opened.id} />
     </article> : <>
-      <div className="knowledge-heading"><div><h2>知識ノート</h2><p>例文なしで、文法・使い分け・調べものをまとめられます。</p></div><button type="button" className="primary-button" disabled={busy} onClick={onCreateNote}>ノートを書く</button></div>
+      <div className="knowledge-heading"><h2>知識ノート</h2><button type="button" className="primary-button" disabled={busy} onClick={onCreateNote}>ノートを書く</button></div>
       <div className="toolbar knowledge-toolbar"><input type="search" aria-label="知識ノートを検索" placeholder="タイトル・本文を検索" value={query} onChange={event => setQuery(event.target.value)} /><div className="filter-group"><button type="button" className={!reviewOnly ? "selected" : ""} aria-pressed={!reviewOnly} onClick={() => setReviewOnly(false)}>すべて {notes.length}</button><button type="button" className={reviewOnly ? "selected" : ""} aria-pressed={reviewOnly} onClick={() => setReviewOnly(true)}>あとで確認 {notes.filter(note => note.needs_review).length}</button></div><button type="button" className="edit-button" disabled={loading || busy} onClick={() => void reload()}>再読み込み</button></div>
       {loading && <p className="knowledge-help" role="status">知識ノートを読み込んでいます…</p>}
       {visible.length ? <div className="note-list">{visible.map(note => <article className="note-card knowledge-card" key={note.id}>

@@ -45,7 +45,7 @@ export function KnowledgeNoteEntryView({ onSaved, onOpenSaved }: { onSaved: (not
   }
 
   return <section className="knowledge-note-entry" aria-label="知識ノートの入力">
-    {lastSaved && <div className="manual-feedback" role="status"><p>「{lastSaved.title}」を保存しました。続けて新しいノートを書けます。</p><button type="button" className="plain-action" onClick={() => onOpenSaved(lastSaved)}>保存したノートを見る</button></div>}
+    {lastSaved && <div className="manual-feedback" role="status"><p>「{lastSaved.title}」を保存しました。</p><button type="button" className="plain-action" onClick={() => onOpenSaved(lastSaved)}>保存したノートを見る</button></div>}
     {error && <p className="manual-feedback error" role="alert">{error}</p>}
     {renderKnowledgeNoteEditor({ draft, dirty, busy, templateId, clearLabel:"入力をクリア", onDraftChange:setDraft, onTemplateChange:setTemplateId, onSubmit:save, onCancel:clear })}
   </section>;

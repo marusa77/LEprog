@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PhraseNest - English Notes",
-  "version": "0.9.6",
+  "version": "0.9.7",
   "description": "呼び出したページで選択した英文を翻訳し、単語・熟語と一緒に保存します。",
   "minimum_chrome_version": "138",
   "permissions": ["storage", "identity", "activeTab", "scripting"],
