@@ -1,5 +1,5 @@
 export type SavedTab = "sentences" | "words" | "notes";
-export type Tab = SavedTab | "today" | "organize" | "settings" | "capture" | "menu" | "writing";
+export type Tab = SavedTab | "today" | "organize" | "settings" | "capture" | "menu" | "writing" | "help";
 export const savedTabStorageKey = "phraseNestLastSavedTab";
 
 export function isSavedTab(tab: unknown): tab is SavedTab {
@@ -8,11 +8,11 @@ export function isSavedTab(tab: unknown): tab is SavedTab {
 
 export function resolveTab(requested: string | null, lastSaved: unknown): Tab {
   if (requested === "library") return isSavedTab(lastSaved) ? lastSaved : "sentences";
-  return isSavedTab(requested) || requested === "capture" || requested === "organize" || requested === "settings" || requested === "menu" || requested === "writing" ? requested : "today";
+  return isSavedTab(requested) || requested === "capture" || requested === "organize" || requested === "settings" || requested === "menu" || requested === "writing" || requested === "help" ? requested : "today";
 }
 
 export function primaryTab(tab: Tab): "capture" | "today" | "library" | "menu" {
   if (isSavedTab(tab)) return "library";
-  if (tab === "organize" || tab === "settings" || tab === "writing") return "menu";
+  if (tab === "organize" || tab === "settings" || tab === "writing" || tab === "help") return "menu";
   return tab;
 }

@@ -60,7 +60,7 @@ export function SentenceLibraryView({ sentences, onEdit, onStudyUpdated, active 
       if (advanceRound) {
         setRound(previous => previous ? { ...previous, index:previous.index + 1, completed:previous.completed + 1 } : previous);
         setRevealed(false);
-      } else setMessage("この英文の復習を記録しました。学習カレンダーでは同じ英文は1日1件です。");
+      } else setMessage("復習を記録しました。");
     } catch (failure) { setError(failure instanceof Error ? failure.message : "復習を記録できませんでした。英文を残しています。もう一度お試しください。"); }
     finally { busy.current = false; setBusyId(null); }
   }
@@ -89,7 +89,7 @@ export function SentenceLibraryView({ sentences, onEdit, onStudyUpdated, active 
   </>;
 
   return <>
-    <div className="page-heading"><div><span className="eyebrow">SAVED SENTENCES</span><h1>保存した英文</h1><p>探すときは最新順、学ぶときは復習シャッフル。</p></div></div>
+    <div className="page-heading"><h1>保存した英文</h1></div>
     {!sentences.length ? <div className="list-empty"><h2>保存した英文はまだありません</h2><p>「入力して保存」またはChrome拡張機能から登録できます。</p></div> : <>
       {!ready && <p className="sentence-study-notice" role="status">英文の復習記録を有効にするには、SupabaseのSQL Editorで「0005_sentence_study.sql」を実行して、このページを再読み込みしてください。最新順とランダムは今までどおり使えます。</p>}
       <div className="sentence-study-controls">
@@ -101,7 +101,7 @@ export function SentenceLibraryView({ sentences, onEdit, onStudyUpdated, active 
           <option value={5}>5件</option><option value={10}>10件</option><option value={20}>20件</option>
         </select></label><button type="button" className="primary-button" disabled={!ready || busyId !== null} onClick={startRound}>英文を{Math.min(roundSize, sentences.length)}件復習</button></div>}
       </div>
-      <p className="sentence-study-help">多め＝繰り返し読みたい · 少なめ＝理解できる／似た英文を十分読んだ。少なめも時々出ます。設定の変更や編集では、現在の並び順は動きません。</p>
+      <details className="inline-help"><summary>復習の順番について</summary><p>「復習シャッフル」は、読み返していない英文や「多め」にした英文を優先します。「少なめ」も時々出ます。設定の変更だけでは、現在の並び順は変わりません。</p><p>「読み直した」を押すたびに記録します。途中で終了しても記録は残り、語句の学習状態は変わりません。</p></details>
       {message && <p className="sentence-study-message" role="status">{message}</p>}
       {error && <p className="sentence-study-error" role="alert">{error}</p>}
       {round ? <section className="sentence-round" aria-label="英文の復習">
@@ -117,7 +117,6 @@ export function SentenceLibraryView({ sentences, onEdit, onStudyUpdated, active 
             <div className="sentence-study-footer">{preferenceControl(current)}<small>{sentenceStudySummary(current)}</small></div>
             <div className="sentence-round-actions"><button type="button" className="primary-button" disabled={busyId !== null} onClick={() => void markRead()}>{busyId === current.id ? "保存中…" : "読み直した"}</button>
               <button type="button" className="edit-button" disabled={busyId !== null} onClick={skip}>今回はスキップ</button></div>
-            <p className="sentence-study-help">「読み直した」を押したときだけ記録します。単語の学習状態は変わりません。</p>
           </article> : <div className="list-empty"><p>この英文は現在の保存内容にありません。</p><button className="edit-button" type="button" onClick={skip}>次へ</button></div>}
       </section> : <div className="sentence-list">{ordered.map(sentence => <article className="sentence-card" key={sentence.id}>
         <div className="sentence-meta"><span>{sentence.community}</span><div><time>{sentence.savedAt}</time><button className="edit-button" type="button" disabled={busyId !== null} onClick={() => onEdit(sentence)}>編集</button></div></div>

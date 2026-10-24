@@ -2,20 +2,21 @@
 <html lang="ja">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>PhraseNest</title><link rel="stylesheet" href="launcher.css"></head>
 <body>
-  <header><span class="mark">P</span><div><h1>PhraseNest</h1><p>保存した英語を、すぐに確認</p></div></header>
+  <header><span class="mark">P</span><div><h1>PhraseNest</h1></div></header>
   <nav aria-label="PhraseNestメニュー">
-    <a data-tab="capture"><strong>入力して保存</strong><span>英文と訳を貼り付け・登録</span></a>
-    <a data-tab="today"><strong>今日の復習</strong><span>意味を思い出す</span></a>
+    <a data-tab="capture"><strong>入力して保存</strong></a>
+    <a data-tab="today"><strong>今日の復習</strong></a>
     <a data-tab="library"><strong>保存内容</strong><span>英文・語句・メモ</span></a>
     <details><summary>メニュー</summary><div class="more-links">
       <a data-tab="words"><strong>単語・熟語</strong><span>意味と登場回数</span></a>
       <a data-tab="notes"><strong>学習メモ</strong><span>コアイメージ・自由メモ</span></a>
       <a data-tab="organize"><strong>Codex整理</strong><span>未整理分の確認</span></a>
+      <a data-tab="help"><strong>使い方</strong></a>
       <button id="settings" type="button" class="settings">拡張機能の設定</button>
     </div></details>
   </nav>
   <button id="translate" type="button">このページでPhraseNestを開く</button>
-  <p id="message" role="status">英文を選択して Ctrl + Shift + Y でも開けます。</p>
+  <p id="message" role="status">英文を選択 → Ctrl + Shift + Y</p>
   <script src="launcher.js"></script>
 </body>
 </html>
