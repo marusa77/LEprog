@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -964,11 +966,28 @@ test("writing draft survives failures, copy errors and tab changes; feedback upd
   assert.match(appSource, /hidden=\{tab !== "writing"\}/); // Keep the component mounted across navigation.
 });
 
-async function render(path = "/", environment = {}) {
-  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
-  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
-  const { default: worker } = await import(workerUrl.href);
-  return worker.fetch(new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }), { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ...environment }, { waitUntil() {}, passThroughOnException() {} });
+async function render(path = "/", environment = {}, init = {}) {
+  // Run the production bundle in workerd: Vinext also imports cloudflare:workers.
+  // Use the same Miniflare version as the pinned Wrangler build tool.
+  const { Miniflare, convertV4MiniflareOptions } = createRequire(nodeRequire.resolve("wrangler/package.json"))("miniflare");
+  const { ASSETS, ...bindings } = environment;
+  const modulesRoot = fileURLToPath(new URL("../dist/server/", import.meta.url));
+  const files = ["index.js", ...(await readdir(modulesRoot, { recursive:true })).filter(file => file.endsWith(".js") && file !== "index.js")];
+  const worker = new Miniflare(convertV4MiniflareOptions({
+    modules: files.map(file => ({ type:"ESModule", path:join(modulesRoot,file) })),
+    modulesRoot,
+    compatibilityDate:"2026-10-19",
+    compatibilityFlags:["nodejs_compat"],
+    bindings,
+    serviceBindings:{ ASSETS:ASSETS?.fetch ?? (() => new Response("Not found", { status:404 })) },
+    outboundService:() => new Response("Network disabled in tests", { status:503 }),
+  }));
+  try {
+    const response = await worker.dispatchFetch(`http://localhost${path}`, { headers:{ accept:"text/html" }, ...init });
+    return new Response(await response.arrayBuffer(), { status:response.status, headers:response.headers });
+  } finally {
+    await worker.dispose();
+  }
 }
 
 test("the built Worker serves runtime public settings without exposing unrelated server secrets", async () => {
@@ -983,11 +1002,27 @@ test("server-renders the PhraseNest learning app", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
+  assert.equal(response.headers.get("x-content-type-options"),"nosniff");
   const html = await response.text();
   assert.match(html, /<title>PhraseNest/);
   assert.match(html, /PhraseNest/);
   assert.match(html, /読み込み中…/);
   assert.doesNotMatch(html, /codex-preview|Your site is taking shape/);
+});
+
+test("the public Worker rejects unused write methods and image processing before framework or asset handling", async () => {
+  let assetCalls = 0;
+  const environment={ ASSETS:{ fetch:async () => { assetCalls++; throw new Error("Unused routes must not fetch assets"); } } };
+  for (const method of ["POST","PUT","PATCH","DELETE","OPTIONS"]) {
+    const response=await render("/",environment,{method,body:method==="POST"?"test-action-body":undefined});
+    assert.equal(response.status,405);
+    assert.equal(response.headers.get("allow"),"GET, HEAD");
+    assert.equal(response.headers.get("x-content-type-options"),"nosniff");
+  }
+  for (const path of ["/_vinext/image?url=https://example.test/image.svg","/_next/image?url=https://example.test/image.svg"]) {
+    const response=await render(path,environment); assert.equal(response.status,404);
+  }
+  assert.equal(assetCalls,0);
 });
 
 test("ships the extension and cloud schema", async () => {
