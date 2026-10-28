@@ -4,16 +4,19 @@
 <body>
   <main>
     <header><span class="mark">P</span><div><h1>PhraseNestの設定</h1></div></header>
-    <section>
-      <h2>1. Supabaseを接続</h2>
+    <p id="connection-status" role="status">接続先を確認中…</p>
+    <details id="connection-settings"><summary>接続設定（開発者向け）</summary><section>
+      <h2>Supabaseを接続</h2>
       <label>Project URL<input id="url" type="url" placeholder="https://xxxxx.supabase.co"></label>
       <label>Publishable key<input id="key" type="password" placeholder="sb_publishable_..."></label>
+      <label>復習ページのURL<input id="review-url" type="url" placeholder="https://your-app.example"></label>
+      <label><input id="require-access" type="checkbox" checked>許可アカウントの確認を必須にする（0008のSQLが必要）</label>
       <button id="save-config" type="button">接続情報を保存</button>
       <p id="config-message" class="inline-message" role="status"></p>
       <p class="hint">秘密鍵ではなく、公開用のPublishable keyを入力してください。</p>
-    </section>
+    </section></details>
     <section>
-      <h2>2. ログイン</h2>
+      <h2>ログイン</h2>
       <div id="signed-out"><button id="google-login" class="primary" type="button">Googleでログイン</button><details><summary>初回のログイン設定</summary><p class="hint">SupabaseのRedirect URLに次を追加してください：<code id="redirect-url"></code></p></details></div>
       <div id="signed-in" hidden><p class="success">ログイン済みです</p><button id="logout" type="button">ログアウト</button></div>
       <p id="message" role="status"></p>

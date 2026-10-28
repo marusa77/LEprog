@@ -15,10 +15,15 @@ PhraseNestは、PC版Chromeの拡張機能、復習用のWeb画面、Supabaseの
 | [0005](../supabase/migrations/0005_sentence_study.sql) | 英文の出やすさ・復習履歴 |
 | [0006](../supabase/migrations/0006_knowledge_notes.sql) | 英文とは独立した知識ノート・あとで確認する目印 |
 | [0007](../supabase/migrations/0007_learning_activity.sql) | 保存・追記・英文／語句／ノートの復習・翻訳の学習記録 |
+| [0008](../supabase/migrations/0008_private_app_access.sql) | 許可アカウントだけにデータ操作と翻訳・AIの利用を制限 |
 
 既存のプロジェクトでは、未実行の追加SQLだけを実行してください。0001は新規作成用なので、既存テーブルに実行し直さないでください。コードの更新だけではSupabaseのSQLは実行されません。
 
 SupabaseのAuthenticationでGoogleログインを有効にし、Google側の認証設定も行います。URL ConfigurationのRedirect URLsには、ログイン後に戻るWeb画面と拡張機能のURLを許可します。
+
+0008は初回Googleログインで自分のユーザーを作った後に実行します。Authenticationのユーザーが1人なら、そのユーザーを許可します。複数いる場合はSQL内の`v_owner_id uuid := null`を自分のUser UIDに置き換えてください。ユーザーを特定できない場合は全体を取り消し、既存データや権限を変更しません。再実行で未許可ユーザーが自動追加されることはありません。
+
+許可一覧は`phrasenest_private.allowed_users`にあり、通常の利用者から変更できません。追加・解除は管理者がSQL Editorで行います。新規ログイン画面を出せることと、アプリのデータ・翻訳を使えることは別です。
 
 ## 2. Web画面を動かす
 
@@ -42,6 +47,8 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_YOUR_KEY
 
 スマホから利用する場合は、Web画面をHTTPSで公開し、その公開URLをSupabaseのRedirect URLsに追加します。公開の手順は利用するホスティング環境に従ってください。同じSupabaseとGoogleアカウントを使うことで、PC・スマホから同じ記録を確認できます。
 
+公開先の実行時設定に`PHRASE_NEST_SUPABASE_URL`と`PHRASE_NEST_SUPABASE_PUBLISHABLE_KEY`を登録すると、Web画面が接続先を自動設定します。別PCでの貼り付けは不要です。この方式では0008による許可確認が必須です。`/api/public-config`は公開用の2項目と確認フラグだけを返し、翻訳用キーやログイン情報は返しません。既存の端末が別のSupabaseを使っている場合は、勝手に切り替えません。
+
 ## 3. 翻訳サービスを設定する
 
 翻訳を使う場合はGoogle Cloud Translationを有効にし、SupabaseのEdge FunctionのSecretに`GOOGLE_TRANSLATE_API_KEY`を設定して、`translate`をデプロイします。
@@ -58,9 +65,21 @@ Secretの実値は、GitHub・Web画面・Chrome拡張機能に入れないで�
 4. 設定画面に、Web画面と同じSupabaseのProject URLとPublishable keyを入力します。
 5. 設定画面に表示される拡張機能用Redirect URLをSupabaseで許可し、Googleでログインします。
 
-自分のWeb画面へ移動するには、`extension/content-script.js`の`phraseNestReviewUrl`と、`extension/launcher.js`の`learningUrl`を、自分の公開URLに揃えてください。
+設定画面の「接続設定（開発者向け）」で、自分の復習ページのURLも指定します。リポジトリの拡張機能には個人の接続先を含めていません。
 
-Chromeウェブストアには未公開です。別のPCでも同じ手順で読み込めますが、拡張機能のIDが変わる場合があるため、そのPCで表示されたRedirect URLも追加します。通常はログイン状態を保持しますが、期限切れなどで再ログインが必要になる場合があります。
+### 別PCでも使う設定済みパッケージ
+
+一度だけ`.env.local`に自分の公開用接続情報2項目と`PHRASE_NEST_REVIEW_URL`を設定し、次を実行します。
+
+```powershell
+npm run extension:package
+```
+
+`outputs/phrasenest-extension.zip`を解凍して読み込むと、Googleログインだけで接続できます。`outputs/extension-setup.txt`にある戻り先URLをSupabaseで一度だけ許可してください。同じZIPを別PCでも使うとIDが固定され、PCごとの戻り先追加が不要になります。設定済みパッケージは0008による許可確認を必須にします。
+
+`.phrase-nest/extension-identity.json`に公開の拡張機能ID用キーを保持します。再作成時はこのファイルを残してください。署名用秘密鍵は保存せず、翻訳用キー・管理用キー・ログイントークンもZIPへ含めません。設定ファイルと`outputs`はGit管理対象外です。配布するZIPには接続先とPublishable keyが入るため、接続先を秘密にする目的には使えません。
+
+Chromeウェブストアには未公開です。ソースの`extension`をそのまま読み込む場合は従来の手動設定が必要です。最初に設定済み版へ移る際はIDが変わり、再ログインが必要になることがあります。通常は端末ごとにログインを保持しますが、期限切れなどで再ログインが必要です。
 
 ## 更新と動作確認
 

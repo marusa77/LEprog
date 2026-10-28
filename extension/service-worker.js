@@ -47,6 +47,9 @@ async function showLaunchError(error) {
 }
 
 let customPatternCache = { expiresAt: 0, rows: [] };
+chrome.storage?.onChanged?.addListener((changes, area) => {
+  if (area === "local" && ["supabaseUrl","supabaseKey","phraseNestSession"].some(key => key in changes)) customPatternCache = { expiresAt:0, rows:[] };
+});
 
 chrome.commands.onCommand.addListener(async (command) => {
   if (command !== "translate-selection") return;
@@ -68,6 +71,9 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     chrome.tabs.query({ active: true, currentWindow: true }).then(([tab]) => openPanel(tab))
       .catch(() => ({ ok: false, error: "ページを再読み込みしてからお試しください。" })).then(sendResponse);
   }
+  else if (message.type === "OPEN_LEARNING_PAGE") {
+    openLearningPage(message.tab).then(sendResponse);
+  }
   else if (message.type === "SAVE_CAPTURE") handleSave(message.payload).then(sendResponse);
   else if (message.type === "TRANSLATE") callFunction("translate", message.payload).then(sendResponse);
   else if (message.type === "EXPLAIN") callFunction("explain", message.payload).then(sendResponse);
@@ -78,16 +84,51 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 });
 
 async function getConfiguration() {
-  const config = await chrome.storage.local.get(["supabaseUrl", "supabaseKey"]);
+  const config = await chrome.storage.local.get(["supabaseUrl", "supabaseKey", "reviewUrl", "requireAppAccess", "phraseNestSession"]);
+  if (!config.supabaseUrl && !config.supabaseKey && !config.phraseNestSession) {
+    const preset = await readDeploymentConfiguration();
+    if (preset.projectUrl && preset.publishableKey) return { url:preset.projectUrl, key:preset.publishableKey, reviewUrl:preset.reviewUrl, requireAccess:preset.requireAccess !== false };
+  }
   if (!config.supabaseUrl || !config.supabaseKey) throw new Error("先に拡張機能の設定を完了してください");
-  return { url: config.supabaseUrl.replace(/\/$/, ""), key: config.supabaseKey };
+  return { url: config.supabaseUrl.replace(/\/$/, ""), key: config.supabaseKey, reviewUrl:config.reviewUrl, requireAccess:config.requireAppAccess === true };
+}
+
+async function readDeploymentConfiguration() {
+  try {
+    const response = await fetch(chrome.runtime.getURL("deployment-config.json"));
+    const preset = await response.json();
+    if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(preset.projectUrl) || !/^sb_publishable_[A-Za-z0-9_-]+$/.test(preset.publishableKey)) return {};
+    return preset;
+  } catch { return {}; }
+}
+
+async function openLearningPage(tab) {
+  try {
+    if (!["capture","today","library","words","notes","organize","help"].includes(tab)) throw new Error("移動先を確認してください。");
+    const config = await getConfiguration();
+    const defaults = config.reviewUrl ? {} : await readDeploymentConfiguration();
+    const preset = defaults.projectUrl === config.url ? defaults : {};
+    const url = new URL(config.reviewUrl || preset.reviewUrl);
+    if (url.protocol !== "https:" || url.username || url.password) throw new Error("設定画面で復習ページのURLを入力してください。");
+    if (tab !== "today") url.searchParams.set("tab",tab);
+    await chrome.tabs.create({ url:url.href }); return { ok:true };
+  } catch { await chrome.runtime.openOptionsPage(); return { ok:false, error:"設定画面で復習ページのURLを確認してください。" }; }
+}
+
+async function checkAppAccess(session) {
+  const config = await getConfiguration();
+  if (!config.requireAccess) return session;
+  const response = await fetch(`${config.url}/rest/v1/rpc/app_access_status`, { method:"POST", headers:{ apikey:config.key, Authorization:`Bearer ${session.access_token}`, "Content-Type":"application/json" }, body:"{}" });
+  if (!response.ok) throw new Error("利用許可を確認できません。管理者は0008のSQL設定を確認してください。");
+  if (await response.json() !== true) throw new Error("このアカウントには利用許可がありません。許可されたGoogleアカウントでログインしてください。");
+  return session;
 }
 
 async function getSession() {
   const { phraseNestSession } = await chrome.storage.local.get("phraseNestSession");
   if (!phraseNestSession?.refresh_token) throw new Error("拡張機能の設定画面からログインしてください");
   const expiresSoon = !phraseNestSession.expires_at || phraseNestSession.expires_at * 1000 < Date.now() + 60000;
-  if (!expiresSoon) return phraseNestSession;
+  if (!expiresSoon) return checkAppAccess(phraseNestSession);
   const { url, key } = await getConfiguration();
   const response = await fetch(`${url}/auth/v1/token?grant_type=refresh_token`, {
     method: "POST", headers: { apikey: key, "Content-Type": "application/json" },
@@ -96,7 +137,7 @@ async function getSession() {
   const refreshed = await response.json();
   if (!response.ok) throw new Error("ログインの有効期限が切れました。もう一度ログインしてください");
   await chrome.storage.local.set({ phraseNestSession: refreshed });
-  return refreshed;
+  return checkAppAccess(refreshed);
 }
 
 async function authenticatedFetch(path, init = {}) {

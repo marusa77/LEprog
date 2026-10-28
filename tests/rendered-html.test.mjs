@@ -277,7 +277,7 @@ test("the unified input hub routes both shortcuts to one creation screen and kee
     require:name => name === "react" ? react : name === "./navigation" ? navigation
       : name === "./manual-entry" ? { ManualEntryView } : name === "./knowledge-note-entry" ? { KnowledgeNoteEntryView }
       : name === "./knowledge-notes" ? { KnowledgeNotesView } : name === "./organization" ? { countPendingOrganizationItems:() => 0 }
-      : name === "./supabase-browser" ? { getSupabaseConfiguration:() => ({}), captureSessionFromUrl:() => null, getStoredSession:() => ({}), loadLearningData:async () => ({ vocabulary:[], savedSentences:[], links:[], usage:{ cloud_translation_characters:0, ai_estimated_usd:0 } }) }
+      : name === "./supabase-browser" ? { initializeSupabaseConfiguration:async () => {}, verifyAppAccess:async () => true, getSupabaseConfiguration:() => ({}), captureSessionFromUrl:() => null, getStoredSession:() => ({}), loadLearningData:async () => ({ vocabulary:[], savedSentences:[], links:[], usage:{ cloud_translation_characters:0, ai_estimated_usd:0 } }) }
       : name.startsWith(".") ? {} : nodeRequire(name),
   });
   const nodes = node => Array.isArray(node) ? node.flatMap(nodes) : !node || typeof node !== "object" ? [] : [node, ...nodes(node.props?.children)];
@@ -964,12 +964,20 @@ test("writing draft survives failures, copy errors and tab changes; feedback upd
   assert.match(appSource, /hidden=\{tab !== "writing"\}/); // Keep the component mounted across navigation.
 });
 
-async function render() {
+async function render(path = "/", environment = {}) {
   const workerUrl = new URL("../dist/server/index.js", import.meta.url);
   workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}`);
   const { default: worker } = await import(workerUrl.href);
-  return worker.fetch(new Request("http://localhost/", { headers: { accept: "text/html" } }), { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } }, { waitUntil() {}, passThroughOnException() {} });
+  return worker.fetch(new Request(`http://localhost${path}`, { headers: { accept: "text/html" } }), { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) }, ...environment }, { waitUntil() {}, passThroughOnException() {} });
 }
+
+test("the built Worker serves runtime public settings without exposing unrelated server secrets", async () => {
+  const response = await render("/api/public-config", { PHRASE_NEST_SUPABASE_URL:"https://test-project.supabase.co", PHRASE_NEST_SUPABASE_PUBLISHABLE_KEY:"sb_publishable_test", GOOGLE_TRANSLATE_API_KEY:"never-expose-this" });
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get("Cache-Control"),"no-store");
+  assert.deepEqual(await response.json(),{ projectUrl:"https://test-project.supabase.co",publishableKey:"sb_publishable_test",requireAccess:true });
+  assert.deepEqual(await (await render("/api/public-config")).json(),{configured:false});
+});
 
 test("server-renders the PhraseNest learning app", async () => {
   const response = await render();
@@ -1015,7 +1023,7 @@ test("ships the extension and cloud schema", async () => {
   assert.match(contentScript, /core_image/);
   assert.match(contentScript, /GET_CUSTOM_PATTERNS/);
   assert.match(contentScript, /今日の復習/);
-  assert.match(contentScript, /searchParams\.set\("tab"/);
+  assert.match(contentScript, /OPEN_LEARNING_PAGE/);
   assert.match(panelCss, /:host\(\[hidden\]\)\s*\{\s*display:\s*none\s*!important/);
   const openTranslator = contentScript.slice(contentScript.indexOf("async function openTranslator"), contentScript.indexOf("function createPanel"));
   assert.ok(openTranslator.indexOf("requestCloudTranslation") < openTranslator.indexOf("translateLocally"));
@@ -1206,7 +1214,7 @@ test("copy buttons use the current sentence and do not replace drag or double-cl
 
 test("page capture uses temporary access without automatic scripts or all-site read permissions", async () => {
   const manifest = JSON.parse(await readFile(new URL("../extension/manifest.json", import.meta.url), "utf8"));
-  assert.equal(manifest.version, "0.9.7");
+  assert.equal(manifest.version, "0.10.0");
   assert.ok(manifest.permissions.includes("activeTab")); assert.ok(manifest.permissions.includes("scripting"));
   assert.deepEqual(manifest.host_permissions, ["https://*.supabase.co/*"]);
   assert.equal(manifest.content_scripts, undefined);
@@ -1661,7 +1669,7 @@ test("Reddit panel folds secondary actions and closes its menu without losing th
   elements.set("#pn-note", { value:"自分のメモ" });
   const root = { querySelector:selector => elements.get(selector) };
   const host = { shadowRoot:root, hidden:false };
-  const context = { root, host, URL, document:{ addEventListener:(event, callback) => documentEvents.set(event, callback) }, window:{ open:url => opened.push(url) }, chrome:{ runtime:{ onMessage:{ addListener() {} }, openOptionsPage() { optionsCount++; } } } };
+  const context = { root, host, URL, document:{ addEventListener:(event, callback) => documentEvents.set(event, callback) }, window:{}, chrome:{ runtime:{ onMessage:{ addListener() {} }, async sendMessage(message) { opened.push(`https://example.test/?tab=${message.tab}`); return { ok:true }; }, openOptionsPage() { optionsCount++; } } } };
   vm.createContext(context); vm.runInContext(script, context);
   vm.runInContext('phraseNestHost = host; selectedPageText = "Keep going."; bindNavigationEvents(root)', context);
   menu.events.get("toggle")();

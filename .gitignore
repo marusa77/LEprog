@@ -54,3 +54,4 @@ next-env.d.ts
 pn-*.json
 /.openai/*.tar.gz
 /.sites-runtime/
+/.phrase-nest/
