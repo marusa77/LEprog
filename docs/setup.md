@@ -4,7 +4,7 @@ PhraseNestは、PC版Chromeの拡張機能、復習用のWeb画面、Supabaseの
 
 ## 1. Supabaseを準備する
 
-新しいSupabaseプロジェクトを作成し、SQL Editorで次のファイルを番号順に実行します。
+新しいSupabaseプロジェクトを作成し、SQL Editorでまず0001〜0007を番号順に実行します。0008は、初回Googleログインでユーザーを作った後に実行します。
 
 | SQL | 追加される仕組み |
 | --- | --- |
@@ -21,9 +21,60 @@ PhraseNestは、PC版Chromeの拡張機能、復習用のWeb画面、Supabaseの
 
 SupabaseのAuthenticationでGoogleログインを有効にし、Google側の認証設定も行います。URL ConfigurationのRedirect URLsには、ログイン後に戻るWeb画面と拡張機能のURLを許可します。
 
-0008は初回Googleログインで自分のユーザーを作った後に実行します。Authenticationのユーザーが1人なら、そのユーザーを許可します。複数いる場合はSQL内の`v_owner_id uuid := null`を自分のUser UIDに置き換えてください。ユーザーを特定できない場合は全体を取り消し、既存データや権限を変更しません。再実行で未許可ユーザーが自動追加されることはありません。
+<a id="account-access"></a>
 
-許可一覧は`phrasenest_private.allowed_users`にあり、通常の利用者から変更できません。追加・解除は管理者がSQL Editorで行います。新規ログイン画面を出せることと、アプリのデータ・翻訳を使えることは別です。
+### 利用アカウントの許可・追加・解除
+
+この操作は、自分のSupabaseの管理者がSQL Editorで行います。User UID（UUID）はアカウントの識別番号で、パスワードやPublishable keyとは別です。UUIDを指定してもログインする人は変わらず、実際にGoogleでログインしたアカウントの利用可否を判定します。
+
+**初回に許可する**
+
+1. 後述のWeb画面を設定してGoogleで一度ログインし、Supabaseの **Authentication → Users** に自分のユーザーを作ります。許可確認が必須の画面では、許可を設定するまで利用できません。
+2. Authentication → Usersで、普段使うGoogleアカウントのUser UIDを確認します。一覧が空の場合は、Googleログインの設定とログイン先のSupabaseプロジェクトを確認してください。
+3. [0008のSQL](../supabase/migrations/0008_private_app_access.sql)を実行します。既存ユーザーが1人で許可一覧が空なら、そのユーザーを許可します。複数いる場合は、SQL中の`declare`で始まる行を次のように変更してから、全文を実行してください。
+
+```sql
+declare v_owner_id uuid := 'ここに自分のUser UID'; v_candidates uuid[];
+```
+
+シングルクォートは残し、コメント内の例ではなく実際の`declare`行を変更します。UUIDやメールアドレスの実値をリポジトリへコミットしないでください。
+
+`Set v_owner_id to your Authentication / Users UUID. No changes were applied.` は、許可するユーザーを自動で1人に特定できなかった場合のエラーです。変更は適用されていないため、上記のようにUIDを指定して全文を再実行します。
+
+**現在の許可一覧を確認する**
+
+```sql
+select user_id, created_at
+from phrasenest_private.allowed_users
+order by created_at;
+```
+
+**別のアカウントを追加する**
+
+追加先のユーザーをAuthentication → Usersで確認し、そのUser UIDを次の例へ入れて実行します。以下のSQL例にある説明用の文字列は、必ず実際のUIDに置き換えてください。
+
+```sql
+insert into phrasenest_private.allowed_users (user_id)
+values ('追加するアカウントのUser UID'::uuid)
+on conflict (user_id) do nothing;
+```
+
+0008の`v_owner_id`を別のUUIDへ変えて再実行した場合も、既存の許可を残したまま追加します。Aの後にBを指定すると、A・Bの両方が使えます。`null`のまま再実行しても、既存の許可一覧へ全ユーザーを自動追加することはありません。
+
+追加先がUsersにない場合は、そのGoogleアカウントでログイン操作を行ってユーザーを作成し、管理者がUIDを確認して許可を追加します。許可前はアプリを利用できません。新規登録を無効にしている環境では、管理者による登録方法の確認が必要です。
+
+**利用許可を外す・アカウントを切り替える**
+
+```sql
+delete from phrasenest_private.allowed_users
+where user_id = '許可を外すアカウントのUser UID'::uuid;
+```
+
+この操作は許可一覧の1件だけを削除し、英文・メモ・復習履歴は削除しません。学習データを残す場合は、Authenticationのユーザー自体は削除しないでください。
+
+同じSupabaseでAからBへ移る場合は、先にBを追加し、BでGoogleログインできることを確認してからAの許可を外します。Bだけを使うならAの許可解除が必要です。保存内容はアカウントごとに別で、Aの記録はBへ自動移行されません。同じアカウントを別PCで使う場合は、許可一覧を変更せず同じGoogleアカウントでログインしてください。
+
+最後に、許可したアカウントで保存内容を開けること、未許可アカウントでは操作できないことを確認します。画面上のGoogleログインの成功だけでは、利用許可の確認にはなりません。
 
 ## 2. Web画面を動かす
 
