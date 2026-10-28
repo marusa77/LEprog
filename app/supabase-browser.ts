@@ -3,21 +3,48 @@ import { activityRange, type ActivitySentence, type ActivityReview, type Activit
 import { buildWritingCapture, type WritingEntry } from "./writing-practice-data";
 import { isReviewPreference, type ReviewPreference, type SentenceStudyMetadata } from "./sentence-study-data";
 import { validateKnowledgeNote, type KnowledgeNote, type KnowledgeNoteInput } from "./knowledge-notes-data";
+import { isPublicApiKey, parsePublicConfiguration } from "./public-configuration";
 
 export type BrowserSession = { access_token: string; refresh_token: string; expires_at: number; user?: { email?: string } };
 export type VocabularyRow = { id: string; term: string; meaning: string; core_image: string; note: string; status: "unlearned" | "learning" | "mastered"; occurrence_count: number; next_review_at: string; created_at: string; updated_at: string; organization_checked_at: string | null };
 export type SentenceRow = { id: string; original_text: string; translation: string; note: string; subreddit: string | null; source_title: string | null; source_url: string | null; created_at: string; updated_at: string; organization_checked_at: string | null; review_preference?: ReviewPreference; last_reviewed_at?: string | null; sentence_review_count?: number };
 export type SentenceVocabularyRow = { sentence_id: string; vocabulary_id: string; selected_text: string };
 export type MonthlyUsageRow = { cloud_translation_characters: number; ai_estimated_usd: number | string };
-export type SupabaseConfiguration = { projectUrl: string; publishableKey: string };
+export type SupabaseConfiguration = { projectUrl: string; publishableKey: string; requireAccess?: boolean };
 
 const envProjectUrl = process.env.NEXT_PUBLIC_SUPABASE_URL?.replace(/\/$/, "") || "";
 const envPublishableKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || "";
 const sessionStorageKey = "phrase-nest-web-session";
 const configStorageKey = "phrase-nest-web-config";
 const returnTabStorageKey = "phrase-nest-web-return-tab";
+let managedConfiguration: SupabaseConfiguration | null = null;
+
+export async function initializeSupabaseConfiguration() {
+  if (typeof window === "undefined") return;
+  try {
+    const response = await fetch("/api/public-config", { cache:"no-store", credentials:"same-origin" });
+    if (!response.ok) return;
+    const config = parsePublicConfiguration(await response.json());
+    if (!config) return;
+    const previous = getSupabaseConfiguration();
+    // Never silently send a session from a self-hosted project to another one.
+    if (previous && previous.projectUrl !== config.projectUrl) return;
+    managedConfiguration = config;
+  } catch { /* Existing device settings still work during a bootstrap outage. */ }
+}
+
+export async function verifyAppAccess(): Promise<boolean> {
+  const config = getSupabaseConfiguration();
+  if (!config?.requireAccess) return true;
+  try {
+    return await rest<boolean>("/rest/v1/rpc/app_access_status", { method:"POST", body:"{}" }) === true;
+  } catch {
+    throw new Error("利用許可を確認できません。接続を確認し、管理者は0008のSQL設定を確認してください。");
+  }
+}
 
 export function getSupabaseConfiguration(): SupabaseConfiguration | null {
+  if (managedConfiguration) return managedConfiguration;
   if (typeof window !== "undefined") {
     try {
       const stored = JSON.parse(localStorage.getItem(configStorageKey) || "null") as SupabaseConfiguration | null;
@@ -34,10 +61,14 @@ export async function saveSupabaseConfiguration(projectUrl: string, publishableK
   const normalizedUrl = projectUrl.trim().replace(/\/$/, "");
   const normalizedKey = publishableKey.trim();
   if (!/^https:\/\/[a-z0-9-]+\.supabase\.co$/i.test(normalizedUrl)) throw new Error("Project URLの形式を確認してください");
-  if (!normalizedKey.startsWith("sb_publishable_") && !normalizedKey.startsWith("eyJ")) throw new Error("Publishable keyを確認してください");
+  if (!isPublicApiKey(normalizedKey)) throw new Error("Publishable keyを確認してください。管理用のキーは使用できません。");
   const response = await fetch(`${normalizedUrl}/auth/v1/settings`, { headers: { apikey: normalizedKey } });
   if (response.status === 401 || response.status === 403) throw new Error("Publishable keyが正しくありません");
   if (!response.ok) throw new Error("Supabaseへ接続できませんでした");
+  if (getSupabaseConfiguration()?.projectUrl !== normalizedUrl) {
+    localStorage.removeItem(sessionStorageKey); localStorage.removeItem(returnTabStorageKey);
+  }
+  managedConfiguration = null;
   localStorage.setItem(configStorageKey, JSON.stringify({ projectUrl: normalizedUrl, publishableKey: normalizedKey }));
 }
 

@@ -11,6 +11,7 @@ import { KnowledgeNotesView } from "./knowledge-notes";
 import { KnowledgeNoteEntryView } from "./knowledge-note-entry";
 import { ActivityReviewButton } from "./activity-review-button";
 import { UserGuideView } from "./user-guide";
+import { initializeSupabaseConfiguration, verifyAppAccess } from "./supabase-browser";
 import type { KnowledgeNote } from "./knowledge-notes-data";
 import { isReviewPreference, type SentenceStudyMetadata, type StudySentence } from "./sentence-study-data";
 import { sentenceSourceLabel } from "./manual-entry-data";
@@ -42,7 +43,7 @@ export function LearningApp() {
   const [largeText, setLargeText] = useState(false);
   const [sentenceItems, setSentenceItems] = useState<Sentence[]>([]);
   const [usage, setUsage] = useState({ cloudCharacters: 0, aiUsd: 0 });
-  const [connection, setConnection] = useState<"setup" | "checking" | "signedout" | "live" | "error">("checking");
+  const [connection, setConnection] = useState<"setup" | "checking" | "signedout" | "live" | "error" | "denied">("checking");
   const [connectionError, setConnectionError] = useState("");
   const [editingWord, setEditingWord] = useState<Word | null>(null);
   const [appendingWord, setAppendingWord] = useState<Word | null>(null);
@@ -73,10 +74,13 @@ export function LearningApp() {
       try { setLargeText(localStorage.getItem("phraseNestLargeText") === "true"); } catch { /* Display preference is optional. */ }
     });
     async function initializeCloudData() {
-      await Promise.resolve();
+      await initializeSupabaseConfiguration();
       if (!getSupabaseConfiguration()) { setConnection("setup"); return; }
       const session = captureSessionFromUrl() || getStoredSession();
       if (!session) { setConnection("signedout"); return; }
+      try {
+        if (!await verifyAppAccess()) { setConnectionError("このアカウントには利用許可がありません。許可されたGoogleアカウントでログインしてください。"); setConnection("denied"); return; }
+      } catch (error) { setConnectionError(error instanceof Error ? error.message : "利用許可を確認できませんでした。"); setConnection("denied"); return; }
       try {
         const { vocabulary, savedSentences, links, usage: currentUsage } = await loadLearningData();
         const sentenceById = new Map(savedSentences.map((sentence) => [sentence.id, sentence]));
@@ -183,6 +187,7 @@ export function LearningApp() {
   if (connection === "checking") return <LoginGate checking />;
   if (connection === "setup") return <SetupGate onComplete={() => setConnection("signedout")} />;
   if (connection === "signedout") return <LoginGate />;
+  if (connection === "denied") return <main className="login-shell"><div className="login-card"><span className="login-mark">P</span><h1>利用許可の確認</h1><p role="alert">{connectionError}</p><button className="primary-button" type="button" onClick={() => setReloadVersion(value => value + 1)}>再確認</button><button className="plain-action" type="button" onClick={signOut}>別のアカウントでログイン</button></div></main>;
 
   const noteCount = knowledgeNoteCount + words.filter((word) => word.coreImage).length + words.filter((word) => word.note).length + sentenceItems.filter((sentence) => sentence.note).length;
   const organizationCount = countPendingOrganizationItems(words, sentenceItems);

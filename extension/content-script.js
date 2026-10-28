@@ -6,7 +6,6 @@ let savedCaptureSnapshot = null;
 let captureBusy = false;
 let translationGeneration = 0;
 let captureTouched = false;
-const phraseNestReviewUrl = "https://phrasenest-reddit-english.uchimaruyukihiro.chatgpt.site";
 
 const commonExpressions = globalThis.PHRASE_NEST_COMMON_EXPRESSIONS || [];
 const conversationPatterns = globalThis.PHRASE_NEST_CONVERSATION_PATTERNS || [];
@@ -488,9 +487,9 @@ function resizeLongTextarea(textarea) {
 }
 
 function openLearningPage(tab) {
-  const url = new URL(phraseNestReviewUrl);
-  if (tab !== "today") url.searchParams.set("tab", tab);
-  window.open(url.toString(), "_blank", "noopener,noreferrer");
+  chrome.runtime.sendMessage({ type:"OPEN_LEARNING_PAGE", tab }).then(result => {
+    if (result?.ok !== true) setPanelMessage(result?.error || "設定画面で復習ページのURLを確認してください。", true);
+  }).catch(() => setPanelMessage("拡張機能を再読み込みしてからお試しください。", true));
 }
 
 async function addTerm(rawTerm, automatic = false, suppliedMeaning = "", candidateKind = "候補") {

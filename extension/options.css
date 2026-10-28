@@ -44,4 +44,6 @@ code { display: block; margin-top: 6px; padding: 10px 12px; background: var(--su
 a { color: var(--green); text-underline-offset: 3px; }
 ::selection { background: var(--mint); color: var(--ink); }
 :focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+summary { min-height:44px; padding:10px 0; cursor:pointer; color:var(--green-dark); }
+input[type=checkbox] { width:18px; height:18px; accent-color:var(--green); display:inline-block; margin-right:8px; }
 @media(max-width: 480px) { main { margin: 28px auto; } section { padding: 20px 16px; } h1 { font-size: 26px; } .inline-message { display: block; margin: 10px 0 0; } }
